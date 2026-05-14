@@ -1,0 +1,118 @@
+# =============================================================================
+# AlgoEngine - Docker Compose Configuration
+# =============================================================================
+#
+# Spins up the full AlgoEngine stack:
+#   - algoengine: The core trading engine (Python)
+#   - dashboard: Real-time monitoring dashboard (TypeScript/Node.js)
+#   - redis: Cache and pub/sub for market data (optional)
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose down           # Stop all services
+#   docker compose logs -f        # Follow logs
+# =============================================================================
+
+version: "3.9"
+
+services:
+  # ── Core Trading Engine ──────────────────────────────────────────────
+  algoengine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: algoengine:latest
+    container_name: algoengine-core
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ALGOENGINE_ENV=${ALGOENGINE_ENV:-production}
+      - ALGOENGINE_MODE=${ALGOENGINE_MODE:-paper}
+      - ALGOENGINE_PORT=8000
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - TZ=${TZ:-UTC}
+    env_file:
+      - .env
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - algo-network
+
+  # ── Real-time Dashboard ──────────────────────────────────────────────
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    image: algoengine-dashboard:latest
+    container_name: algoengine-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DASHBOARD_PORT=3000
+      - ENGINE_API_URL=http://algoengine:8000
+      - ENGINE_WS_URL=ws://algoengine:8000/ws
+      - DASHBOARD_REFRESH=2000
+      - TZ=${TZ:-UTC}
+    depends_on:
+      algoengine:
+        condition: service_healthy
+    networks:
+      - algo-network
+
+  # ── Redis (Cache & Pub/Sub) ──────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: algoengine-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - algo-network
+
+  # ── Monitoring Agent ─────────────────────────────────────────────────
+  monitor:
+    build:
+      context: ./monitor
+      dockerfile: Dockerfile
+    image: algoengine-monitor:latest
+    container_name: algoengine-monitor
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    environment:
+      - ENGINE_URL=http://algoengine:8000
+      - TZ=${TZ:-UTC}
+    depends_on:
+      algoengine:
+        condition: service_healthy
+    networks:
+      - algo-network
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  algo-network:
+    driver: bridge
