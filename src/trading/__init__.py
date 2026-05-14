@@ -15,6 +15,7 @@ from .models import (
 from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .execution_engine import ExecutionEngine, BrokerAdapter
+from .live_engine import LiveEngine
 
 __all__ = [
     # Models
@@ -34,4 +35,5 @@ __all__ = [
     # Engine
     "ExecutionEngine",
     "BrokerAdapter",
+    "LiveEngine",
 ]
