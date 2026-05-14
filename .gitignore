@@ -70,8 +70,12 @@ Thumbs.db
 config/local.yaml
 config/production.yaml
 
+# Node.js / TypeScript
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+
 # Development artifacts
 *.tmp
 *.bak
-.DS_Store
-Thumbs.db
+
