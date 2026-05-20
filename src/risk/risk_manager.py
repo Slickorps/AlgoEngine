@@ -2,13 +2,15 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import List, Optional, Dict, Any, Callable
+from typing import TYPE_CHECKING, List, Optional, Dict, Any, Callable
 from enum import Enum, auto
 
 from ..trading.models import Order, OrderSide
-from ..portfolio.portfolio import Portfolio
 from ..data.models import Symbol
 from ..utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from ..portfolio.portfolio import Portfolio
 
 logger = get_logger("risk")
 
@@ -38,7 +40,7 @@ class RiskRule:
 @dataclass
 class RiskContext:
     """Context for risk checks"""
-    portfolio: Portfolio
+    portfolio: 'Portfolio'
     order: Optional[Order] = None
     symbol: Optional[Symbol] = None
     proposed_quantity: Optional[Decimal] = None
@@ -48,7 +50,7 @@ class RiskContext:
 class RiskManager:
     """Manage trading risk"""
     
-    def __init__(self, portfolio: Portfolio) -> None:
+    def __init__(self, portfolio: 'Portfolio') -> None:
         self._portfolio = portfolio
         self._rules: List[RiskRule] = []
         self._custom_checks: List[Callable[[RiskContext], tuple[bool, str]]] = []
