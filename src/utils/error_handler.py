@@ -287,6 +287,11 @@ class CircuitBreaker:
             except Exception:
                 logger.debug(f"CircuitBreaker callback error for [{name}]", exc_info=True)
 
+    def trip(self, reason: str) -> None:
+        """Force the breaker to OPEN immediately (e.g. manual trigger)."""
+        logger.critical(f"CircuitBreaker [{self.name}] TRIPPED: {reason}")
+        self._transition_to_open()
+
     def reset(self) -> None:
         """Force-reset to CLOSED (e.g. after manual intervention)."""
         logger.info(f"CircuitBreaker [{self.name}] manually reset to CLOSED")

@@ -26,6 +26,12 @@ from ..engine.events import Event, EventBus, EventType, get_event_bus
 from ..engine.interfaces import IPortfolio
 from ..risk.risk_manager import RiskManager, RiskContext
 from ..utils.logger import get_logger
+from ..utils.error_handler import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    RetryConfig,
+    retry_async,
+)
 
 logger = get_logger("trading.live_engine")
 
@@ -216,75 +222,6 @@ class LiveTradeLogger:
         self._error_log.clear()
 
 
-class CircuitBreaker:
-    """
-    Circuit breaker to prevent runaway trading during adverse conditions.
-    Trips when drawdown exceeds threshold or error rate is too high.
-    """
-
-    def __init__(self, config: LiveEngineConfig) -> None:
-        self._config = config
-        self._is_active: bool = False
-        self._triggered_at: Optional[datetime] = None
-        self._consecutive_errors: int = 0
-        self._max_consecutive_errors: int = 5
-        self._error_window: List[datetime] = []
-        self._error_window_seconds: float = 60.0
-        self._trade_paused: bool = False
-
-    @property
-    def is_active(self) -> bool:
-        """Check if circuit breaker is active"""
-        if self._is_active and self._triggered_at:
-            # Check if cooldown period has elapsed
-            elapsed = (datetime.now() - self._triggered_at).total_seconds()
-            if elapsed >= self._config.circuit_breaker_cooldown:
-                self.reset()
-                return False
-        return self._is_active
-
-    def record_error(self) -> None:
-        """Record an error event"""
-        now = datetime.now()
-        self._error_window.append(now)
-        self._consecutive_errors += 1
-
-        # Remove errors outside window
-        self._error_window = [
-            t for t in self._error_window
-            if (now - t).total_seconds() <= self._error_window_seconds
-        ]
-
-        # Trigger circuit breaker if too many errors in window
-        if len(self._error_window) >= self._max_consecutive_errors:
-            self.trigger("Too many consecutive errors")
-
-        # Trigger if consecutive errors too high
-        if self._consecutive_errors >= self._max_consecutive_errors:
-            self.trigger("Max consecutive errors reached")
-
-    def check_drawdown(self, current_drawdown_pct: float) -> None:
-        """Check drawdown against circuit breaker threshold"""
-        if current_drawdown_pct >= self._config.circuit_breaker_loss_pct:
-            self.trigger(f"Drawdown {current_drawdown_pct:.2f}% exceeds "
-                        f"{self._config.circuit_breaker_loss_pct}% threshold")
-
-    def trigger(self, reason: str) -> None:
-        """Trigger the circuit breaker"""
-        if not self._is_active:
-            self._is_active = True
-            self._triggered_at = datetime.now()
-            logger.critical(f"CIRCUIT BREAKER TRIGGERED: {reason}")
-
-    def reset(self) -> None:
-        """Reset the circuit breaker"""
-        self._is_active = False
-        self._triggered_at = None
-        self._consecutive_errors = 0
-        self._error_window.clear()
-        logger.info("Circuit breaker reset")
-
-
 class LiveEngine:
     """
     Live trading engine for production use.
@@ -309,7 +246,13 @@ class LiveEngine:
         # Core components
         self._risk_manager: Optional[RiskManager] = None
         self._trade_logger = LiveTradeLogger()
-        self._circuit_breaker = CircuitBreaker(self._config)
+        self._circuit_breaker = CircuitBreaker(
+            CircuitBreakerConfig(
+                failure_threshold=5,
+                cooldown_seconds=self._config.circuit_breaker_cooldown,
+            ),
+            name="live_engine",
+        )
         self._stats = LiveTradingStats()
 
         # State management
@@ -334,7 +277,20 @@ class LiveEngine:
         self._on_health_change: List[Callable[[EngineHealth], None]] = []
         self._on_circuit_breaker: List[Callable[[str], None]] = []
 
+        # Fire callbacks when the unified circuit breaker changes state
+        self._circuit_breaker.on_open.append(self._on_cb_open)
+
         logger.info(f"LiveEngine initialized in {mode.value} mode")
+
+    def _on_cb_open(self, name: str) -> None:
+        """Handle circuit breaker opening — fire registered callbacks."""
+        self._stats.is_circuit_breaker_active = True
+        self._stats.circuit_breaker_triggered_at = datetime.now()
+        for handler in self._on_circuit_breaker:
+            try:
+                handler(name)
+            except Exception as e:
+                logger.error(f"Error in circuit breaker handler: {e}")
 
     # ------------------------------------------------------------------
     # Properties
@@ -546,31 +502,38 @@ class LiveEngine:
         self._connected = False
 
     async def _reconnect_broker(self) -> bool:
-        """Attempt to reconnect to broker"""
+        """Attempt to reconnect to broker (uses unified retry with backoff)."""
         if not self._config.auto_reconnect or not self._broker:
             return False
 
         logger.info("Attempting broker reconnection...")
         self._stats.connection_drops += 1
 
-        for attempt in range(1, self._config.reconnect_max_attempts + 1):
-            delay = self._config.reconnect_delay * (
-                self._config.reconnect_backoff ** (attempt - 1)
+        try:
+            await retry_async(
+                self._do_single_reconnect,
+                config=RetryConfig(
+                    max_attempts=self._config.reconnect_max_attempts,
+                    base_delay=self._config.reconnect_delay,
+                    backoff_factor=self._config.reconnect_backoff,
+                    max_delay=60.0,
+                    jitter=True,
+                ),
+                circuit_breaker=self._circuit_breaker,
+                context="broker.reconnect",
             )
-            logger.info(f"Reconnect attempt {attempt}/{self._config.reconnect_max_attempts} "
-                       f"in {delay:.1f}s")
-            await asyncio.sleep(delay)
+            logger.info("Reconnected to broker")
+            return True
+        except Exception:
+            logger.error("All reconnection attempts failed")
+            self._health = EngineHealth.OFFLINE
+            return False
 
-            try:
-                if await self._connect_broker():
-                    logger.info("Reconnected to broker")
-                    return True
-            except Exception as e:
-                logger.warning(f"Reconnect attempt {attempt} failed: {e}")
-
-        logger.error("All reconnection attempts failed")
-        self._health = EngineHealth.OFFLINE
-        return False
+    async def _do_single_reconnect(self) -> bool:
+        """Perform a single broker connection attempt (raises on failure)."""
+        if await self._connect_broker():
+            return True
+        raise ConnectionError("Broker connection attempt returned False")
 
     # ------------------------------------------------------------------
     # Order Execution
@@ -668,7 +631,7 @@ class LiveEngine:
 
         except Exception as e:
             self._trade_logger.log_error("order.submit", e, str(order))
-            self._circuit_breaker.record_error()
+            self._circuit_breaker.record_failure()
             self._stats.total_orders_rejected += 1
             return False, f"Error submitting order: {e}"
 
@@ -752,10 +715,15 @@ class LiveEngine:
                     )
                     self._stats.current_drawdown_pct = float(drawdown)
 
-                    # Check circuit breaker
-                    self._circuit_breaker.check_drawdown(
+                    # Check circuit breaker – trip if drawdown exceeds threshold
+                    if (
                         self._stats.current_drawdown_pct
-                    )
+                        >= self._config.circuit_breaker_loss_pct
+                    ):
+                        self._circuit_breaker.trip(
+                            f"Drawdown {self._stats.current_drawdown_pct:.2f}% "
+                            f"exceeds {self._config.circuit_breaker_loss_pct}% threshold"
+                        )
 
             elif isinstance(data, Bar):
                 # Handle bar data for strategy updates
