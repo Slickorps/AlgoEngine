@@ -3,14 +3,13 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any
 from collections import defaultdict
 
-import numpy as np
 
 from ..portfolio.portfolio import PortfolioSnapshot
 from ..trading.models import Trade
-from ..portfolio.metrics import PerformanceMetrics, PerformanceCalculator
+from ..portfolio.metrics import PerformanceCalculator
 
 
 @dataclass

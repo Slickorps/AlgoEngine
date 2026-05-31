@@ -2,11 +2,10 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum, auto
 
-import pytz
 from pytz import timezone
 
 from ..utils.logger import get_logger

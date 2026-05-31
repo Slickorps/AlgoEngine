@@ -1,10 +1,9 @@
 """Portfolio management for AlgoEngine"""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
-from collections import defaultdict
 
 from ..trading.models import Position, Trade, OrderSide
 from ..data.models import Symbol

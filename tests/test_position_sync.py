@@ -2,7 +2,6 @@
 
 import pytest
 from decimal import Decimal
-from datetime import datetime
 
 from src.portfolio.position_sync import (
     PositionSynchronizer,

@@ -6,22 +6,20 @@ and performance tracking.
 """
 
 import asyncio
-import heapq
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum, auto
 from typing import (
-    Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type,
+    Any, Callable, Dict, List, Optional,
 )
 
 from .models import (
-    Order, OrderType, OrderSide, OrderStatus, Fill, CommissionModel,
+    Order,
 )
 from .execution_engine import BrokerAdapter
-from ..data.models import Symbol, Tick
+from ..data.models import Symbol
 from ..utils.logger import get_logger
 
 logger = get_logger("trading.order_router")

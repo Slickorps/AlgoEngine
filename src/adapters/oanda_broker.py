@@ -2,17 +2,15 @@
 
 import asyncio
 import aiohttp
-import json
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from enum import Enum, auto
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
 from typing import Dict, List, Optional, Any, Callable
 from decimal import Decimal
 from urllib.parse import urljoin
 
 from ..engine.interfaces import ITransactionHandler, IResultHandler
-from ..models import Symbol, Order, OrderType, OrderStatus, PositionSide, Position
+from ..engine.interfaces import Symbol, Order, OrderType, OrderStatus, PositionSide, Position, OrderEvent
 from ..utils.logger import get_logger
 
 logger = get_logger("adapters.oanda")
@@ -45,7 +43,6 @@ class OandaTimeframe(Enum):
     H4 = "H4"
     D1 = "D1"
     W1 = "W1"
-    M1 = "M1"
 
 
 @dataclass
@@ -119,7 +116,7 @@ class OandaPosition:
             side = 'long'
             units = long_units
             avg_price = Decimal(str(data['long']['averagePrice']))
-        elif short_units > 0:
+        elif short_units < 0:  # Short units are negative in OANDA
             side = 'short'
             units = abs(short_units)
             avg_price = Decimal(str(data['short']['averagePrice']))
@@ -151,51 +148,46 @@ class OandaOrder:
     stop_loss: Optional[Decimal]
     take_profit: Optional[Decimal]
     status: str
-    create_time: datetime
+    create_time: Optional[datetime]
     cancel_time: Optional[datetime]
     fill_time: Optional[datetime]
     
     @classmethod
     def from_response(cls, data: Dict[str, Any]) -> 'OandaOrder':
+        units = Decimal(str(data['units']))
+        side = 'buy' if units > 0 else 'sell'
+        
         return cls(
             id=data['id'],
             instrument=data['instrument'],
-            type=data['type'],
-            side=data['units'] > 0 and 'buy' or 'sell',
-            units=Decimal(str(abs(float(data['units'])))),
-            price=Decimal(str(data['price'])) if data.get('price') else None,
-            stop_loss=Decimal(str(data['stopLossOnFill']['price'])) if data.get('stopLossOnFill') else None,
-            take_profit=Decimal(str(data['takeProfitOnFill']['price'])) if data.get('takeProfitOnFill') else None,
-            status=data['state'],
-            create_time=datetime.fromtimestamp(float(data['createTime'])),
-            cancel_time=datetime.fromtimestamp(float(data['cancelTime'])) if data.get('cancelTime') else None,
-            fill_time=datetime.fromtimestamp(float(data['fillTime'])) if data.get('fillTime') else None
+            type=data.get('type', 'MARKET'),
+            side=side,
+            units=abs(units),
+            price=Decimal(str(data['price'])) if 'price' in data and data['price'] else None,
+            stop_loss=Decimal(str(data['stopLossOnFill']['price'])) if 'stopLossOnFill' in data else None,
+            take_profit=Decimal(str(data['takeProfitOnFill']['price'])) if 'takeProfitOnFill' in data else None,
+            status=data.get('state', 'PENDING'),
+            create_time=datetime.fromtimestamp(float(data['createTime'])) if 'createTime' in data else None,
+            cancel_time=datetime.fromtimestamp(float(data['cancelTime'])) if 'cancelTime' in data else None,
+            fill_time=datetime.fromtimestamp(float(data['fillTime'])) if 'fillTime' in data else None,
         )
 
 
 class OandaApiClient:
-    """OANDA REST API client"""
+    """OANDA API HTTP client"""
     
     def __init__(self, config: OandaConfig):
         self._config = config
         self._session: Optional[aiohttp.ClientSession] = None
         self._base_url = config.get_base_url()
         self._headers = config.get_headers()
-        
-    async def __aenter__(self):
-        await self.connect()
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.disconnect()
     
     async def connect(self) -> None:
-        """Create HTTP session"""
+        """Establish HTTP session"""
         if self._session is None:
-            timeout = aiohttp.ClientTimeout(total=self._config.timeout)
             self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                headers=self._headers
+                headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=self._config.timeout)
             )
     
     async def disconnect(self) -> None:
@@ -204,6 +196,13 @@ class OandaApiClient:
             await self._session.close()
             self._session = None
     
+    async def __aenter__(self) -> 'OandaApiClient':
+        await self.connect()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.disconnect()
+    
     async def _request(
         self,
         method: str,
@@ -211,10 +210,7 @@ class OandaApiClient:
         params: Optional[Dict[str, Any]] = None,
         data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Make HTTP request with retry logic"""
-        if not self._session:
-            await self.connect()
-        
+        """Make HTTP request to OANDA API with retry logic"""
         url = urljoin(self._base_url, endpoint)
         
         for attempt in range(self._config.retry_attempts):
@@ -225,79 +221,61 @@ class OandaApiClient:
                     params=params,
                     json=data
                 ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"OANDA API error {response.status}: {error_text}")
-                        raise Exception(f"OANDA API error: {response.status} - {error_text}")
-            
-            except Exception as e:
+                    if response.status == 429:  # Rate limited
+                        retry_after = int(response.headers.get('Retry-After', self._config.retry_delay))
+                        await asyncio.sleep(retry_after)
+                        continue
+                    
+                    response.raise_for_status()
+                    return await response.json()
+                    
+            except aiohttp.ClientError:
                 if attempt == self._config.retry_attempts - 1:
                     raise
-                
-                logger.warning(f"Request failed (attempt {attempt + 1}): {e}")
-                await asyncio.sleep(self._config.retry_delay * (2 ** attempt))
+                await asyncio.sleep(self._config.retry_delay)
+        
+        raise Exception(f"Request failed after {self._config.retry_attempts} attempts")
     
     async def get_account(self) -> OandaAccount:
-        """Get account information"""
+        """Get account details"""
         endpoint = f"/v3/accounts/{self._config.account_id}"
         response = await self._request("GET", endpoint)
         return OandaAccount.from_response(response['account'])
     
     async def get_positions(self) -> List[OandaPosition]:
-        """Get all open positions"""
+        """Get all positions"""
         endpoint = f"/v3/accounts/{self._config.account_id}/positions"
         response = await self._request("GET", endpoint)
-        
-        positions = []
-        for pos_data in response['positions']:
-            if pos_data['long']['units'] != '0' or pos_data['short']['units'] != '0':
-                positions.append(OandaPosition.from_response(pos_data))
-        
-        return positions
+        return [OandaPosition.from_response(pos) for pos in response['positions']]
     
     async def get_orders(self) -> List[OandaOrder]:
-        """Get all pending orders"""
+        """Get all orders"""
         endpoint = f"/v3/accounts/{self._config.account_id}/orders"
         response = await self._request("GET", endpoint)
-        
-        orders = []
-        for order_data in response['orders']:
-            orders.append(OandaOrder.from_response(order_data))
-        
-        return orders
+        return [OandaOrder.from_response(order) for order in response.get('orders', [])]
     
     async def create_market_order(
         self,
         instrument: str,
         units: int,
-        take_profit: Optional[float] = None,
-        stop_loss: Optional[float] = None
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None
     ) -> OandaOrder:
         """Create market order"""
         endpoint = f"/v3/accounts/{self._config.account_id}/orders"
         
         order_data = {
             "order": {
-                "type": OandaOrderType.MARKET.value,
+                "type": "MARKET",
                 "instrument": instrument,
-                "units": str(units),
-                "timeInForce": "FOK"
+                "units": str(units)
             }
         }
         
-        # Add take profit if specified
-        if take_profit:
-            order_data["order"]["takeProfitOnFill"] = {
-                "price": str(take_profit)
-            }
-        
-        # Add stop loss if specified
         if stop_loss:
-            order_data["order"]["stopLossOnFill"] = {
-                "price": str(stop_loss)
-            }
+            order_data["order"]["stopLossOnFill"] = {"price": str(stop_loss)}
+        if take_profit:
+            order_data["order"]["takeProfitOnFill"] = {"price": str(take_profit)}
         
         response = await self._request("POST", endpoint, data=order_data)
         return OandaOrder.from_response(response['orderCreateTransaction'])
@@ -307,33 +285,25 @@ class OandaApiClient:
         instrument: str,
         units: int,
         price: float,
-        take_profit: Optional[float] = None,
-        stop_loss: Optional[float] = None
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None
     ) -> OandaOrder:
         """Create limit order"""
         endpoint = f"/v3/accounts/{self._config.account_id}/orders"
         
         order_data = {
             "order": {
-                "type": OandaOrderType.LIMIT.value,
+                "type": "LIMIT",
                 "instrument": instrument,
                 "units": str(units),
-                "price": str(price),
-                "timeInForce": "GTC"
+                "price": str(price)
             }
         }
         
-        # Add take profit if specified
-        if take_profit:
-            order_data["order"]["takeProfitOnFill"] = {
-                "price": str(take_profit)
-            }
-        
-        # Add stop loss if specified
         if stop_loss:
-            order_data["order"]["stopLossOnFill"] = {
-                "price": str(stop_loss)
-            }
+            order_data["order"]["stopLossOnFill"] = {"price": str(stop_loss)}
+        if take_profit:
+            order_data["order"]["takeProfitOnFill"] = {"price": str(take_profit)}
         
         response = await self._request("POST", endpoint, data=order_data)
         return OandaOrder.from_response(response['orderCreateTransaction'])
@@ -341,7 +311,6 @@ class OandaApiClient:
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order"""
         endpoint = f"/v3/accounts/{self._config.account_id}/orders/{order_id}/cancel"
-        
         try:
             await self._request("PUT", endpoint)
             return True
@@ -349,27 +318,18 @@ class OandaApiClient:
             logger.error(f"Failed to cancel order {order_id}: {e}")
             return False
     
-    async def close_position(
-        self,
-        instrument: str,
-        units: Optional[int] = None
-    ) -> bool:
+    async def close_position(self, instrument: str) -> bool:
         """Close a position"""
         endpoint = f"/v3/accounts/{self._config.account_id}/positions/{instrument}/close"
-        
-        data = {}
-        if units:
-            data["units"] = str(units)
-        
         try:
-            await self._request("PUT", endpoint, data=data)
+            await self._request("PUT", endpoint)
             return True
         except Exception as e:
             logger.error(f"Failed to close position {instrument}: {e}")
             return False
     
-    async def get_pricing(self, instruments: List[str]) -> Dict[str, Any]:
-        """Get current pricing for instruments"""
+    async def get_pricing(self, instruments: List[str]) -> List[Dict[str, Any]]:
+        """Get pricing for instruments"""
         endpoint = f"/v3/accounts/{self._config.account_id}/pricing"
         params = {
             "instruments": ",".join(instruments)
@@ -389,7 +349,7 @@ class OandaApiClient:
         """Get candle data"""
         endpoint = f"/v3/instruments/{instrument}/candles"
         params = {
-            "price": "MBA",  # Mid, Bid, Ask
+            "price": "MBA",
             "granularity": timeframe.value,
             "count": count
         }
@@ -400,7 +360,7 @@ class OandaApiClient:
             params["to"] = to_time.isoformat()
         
         response = await self._request("GET", endpoint, params=params)
-        return response['candles']
+        return response.get('candles', [])
 
 
 class OandaBroker(ITransactionHandler):
@@ -419,6 +379,26 @@ class OandaBroker(ITransactionHandler):
         self._on_order_filled: Optional[Callable[[OandaOrder], None]] = None
         self._on_position_opened: Optional[Callable[[OandaPosition], None]] = None
         self._on_position_closed: Optional[Callable[[OandaPosition], None]] = None
+    
+    def process_order(self, order: Order) -> OrderEvent:
+        """Process an order synchronously - not supported for live trading"""
+        raise NotImplementedError("Use submit_order for async order processing")
+    
+    def cancel_order(self, order_id: str) -> OrderEvent:
+        """Cancel an order synchronously - not supported for live trading"""
+        raise NotImplementedError("Use async cancel_order method for live trading")
+    
+    def update_order(self, order: Order) -> OrderEvent:
+        """Update an existing order synchronously - not supported for live trading"""
+        raise NotImplementedError("Use async methods for live trading")
+    
+    def get_open_orders(self, symbol: Optional[Symbol] = None) -> List[Order]:
+        """Get open orders - sync version raises if not connected"""
+        return []
+    
+    def get_order_by_id(self, order_id: str) -> Optional[Order]:
+        """Get order by ID - sync version raises if not connected"""
+        return None
     
     async def connect(self) -> bool:
         """Connect to OANDA API"""
@@ -465,16 +445,12 @@ class OandaBroker(ITransactionHandler):
                 oanda_order = await self._client.create_market_order(
                     instrument=instrument,
                     units=int(order.quantity),
-                    take_profit=float(order.take_profit) if order.take_profit else None,
-                    stop_loss=float(order.stop_loss) if order.stop_loss else None
                 )
             elif order.order_type == OrderType.LIMIT:
                 oanda_order = await self._client.create_limit_order(
                     instrument=instrument,
                     units=int(order.quantity),
-                    price=float(order.limit_price),
-                    take_profit=float(order.take_profit) if order.take_profit else None,
-                    stop_loss=float(order.stop_loss) if order.stop_loss else None
+                    price=float(order.price) if order.price else 0.0,
                 )
             else:
                 logger.error(f"Unsupported order type: {order.order_type}")
@@ -494,25 +470,25 @@ class OandaBroker(ITransactionHandler):
             logger.error(f"Failed to submit order: {e}")
             return False
     
-    async def cancel_order(self, order: Order) -> bool:
-        """Cancel order"""
-        if not order.id:
+    async def cancel_order_by_id(self, order_id: str) -> bool:
+        """Cancel order by ID"""
+        if not order_id:
             logger.error("Order has no ID")
             return False
         
         try:
-            success = await self._client.cancel_order(order.id)
+            success = await self._client.cancel_order(order_id)
             if success:
                 # Update order status
-                if order.id in self._orders:
-                    self._orders[order.id].status = "CANCELLED"
+                if order_id in self._orders:
+                    self._orders[order_id].status = "CANCELLED"
                 
-                logger.info(f"Order cancelled: {order.id}")
+                logger.info(f"Order cancelled: {order_id}")
             
             return success
             
         except Exception as e:
-            logger.error(f"Failed to cancel order {order.id}: {e}")
+            logger.error(f"Failed to cancel order {order_id}: {e}")
             return False
     
     async def get_account_info(self) -> Dict[str, Any]:
@@ -547,18 +523,16 @@ class OandaBroker(ITransactionHandler):
             
             positions = []
             for oanda_pos in self._positions.values():
-                # Convert to our Position model
                 symbol = self._convert_oanda_to_symbol(oanda_pos.instrument)
                 side = PositionSide.LONG if oanda_pos.side == 'long' else PositionSide.SHORT
                 
                 position = Position(
                     symbol=symbol,
                     side=side,
-                    size=oanda_pos.units,
-                    entry_price=oanda_pos.avg_price,
-                    current_price=oanda_pos.current_price,
+                    quantity=oanda_pos.units,
+                    avg_entry_price=oanda_pos.avg_price,
                     unrealized_pnl=oanda_pos.unrealized_pl,
-                    timestamp=datetime.now()
+                    market_price=oanda_pos.current_price,
                 )
                 positions.append(position)
             
@@ -578,24 +552,23 @@ class OandaBroker(ITransactionHandler):
             
             orders = []
             for oanda_order in self._orders.values():
-                # Convert to our Order model
                 symbol = self._convert_oanda_to_symbol(oanda_order.instrument)
                 order_type = self._convert_oanda_order_type(oanda_order.type)
                 status = self._convert_oanda_order_status(oanda_order.status)
+                side = 'BUY' if oanda_order.side == 'buy' else 'SELL'
                 
                 order = Order(
+                    id=oanda_order.id,
                     symbol=symbol,
                     order_type=order_type,
+                    side=side,
                     quantity=oanda_order.units,
-                    side='buy' if oanda_order.side == 'buy' else 'sell',
-                    limit_price=oanda_order.price,
-                    stop_loss=oanda_order.stop_loss,
-                    take_profit=oanda_order.take_profit,
+                    price=oanda_order.price,
+                    stop_price=oanda_order.stop_loss,
                     status=status,
-                    timestamp=oanda_order.create_time
+                    created_at=oanda_order.create_time,
+                    tags={},
                 )
-                order.id = oanda_order.id
-                
                 orders.append(order)
             
             return orders
@@ -611,9 +584,7 @@ class OandaBroker(ITransactionHandler):
         
         try:
             instrument = self._convert_symbol_to_oanda(symbol)
-            units = int(quantity) if quantity else None
-            
-            success = await self._client.close_position(instrument, units)
+            success = await self._client.close_position(instrument)
             
             if success:
                 await self._refresh_positions()
@@ -656,16 +627,16 @@ class OandaBroker(ITransactionHandler):
     
     def _convert_symbol_to_oanda(self, symbol: Symbol) -> str:
         """Convert our Symbol to OANDA instrument format"""
-        # OANDA uses format like "EUR_USD" for forex pairs
         if '_' in symbol.ticker:
             return symbol.ticker
+        elif len(symbol.ticker) == 6 and symbol.ticker.isalpha():
+            # Forex pairs like EURUSD -> EUR_USD
+            return f"{symbol.ticker[:3]}_{symbol.ticker[3:]}"
         else:
-            # For single symbols, assume they're forex pairs with USD
             return f"{symbol.ticker}_USD"
     
     def _convert_oanda_to_symbol(self, instrument: str) -> Symbol:
         """Convert OANDA instrument to our Symbol"""
-        # OANDA uses format like "EUR_USD" for forex pairs
         if '_' in instrument:
             ticker = instrument.replace('_', '')
         else:
@@ -679,9 +650,6 @@ class OandaBroker(ITransactionHandler):
             "MARKET": OrderType.MARKET,
             "LIMIT": OrderType.LIMIT,
             "STOP": OrderType.STOP,
-            "STOP_LOSS": OrderType.STOP_LOSS,
-            "TAKE_PROFIT": OrderType.TAKE_PROFIT,
-            "MARKET_IF_TOUCHED": OrderType.MARKET_IF_TOUCHED
         }
         return mapping.get(oanda_type, OrderType.MARKET)
     
@@ -696,7 +664,7 @@ class OandaBroker(ITransactionHandler):
             "DAY": OrderStatus.PENDING,
             "FILLED": OrderStatus.FILLED,
             "CANCELLED": OrderStatus.CANCELLED,
-            "REJECTED": OrderStatus.REJECTED
+            "REJECTED": OrderStatus.REJECTED,
         }
         return mapping.get(oanda_status, OrderStatus.PENDING)
     
@@ -723,7 +691,6 @@ class OandaBroker(ITransactionHandler):
             
             if pricing:
                 price_data = pricing[0]
-                # Return mid price
                 if 'closeoutMid' in price_data:
                     return float(price_data['closeoutMid'])
                 elif 'bid' in price_data and 'ask' in price_data:

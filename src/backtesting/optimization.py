@@ -1,14 +1,12 @@
 """Parameter optimization for backtesting"""
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
 from itertools import product
 import json
 
 from .engine import BacktestEngine, BacktestConfig
 from .results import BacktestResults
-from ..algorithms.strategy import Strategy
 from ..data.models import Symbol
 from ..utils.logger import get_logger
 

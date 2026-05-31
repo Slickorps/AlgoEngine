@@ -1,34 +1,39 @@
 """Tests for OANDA broker adapter"""
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 from decimal import Decimal
+from datetime import datetime
 
 from src.adapters.oanda_broker import (
-    OandaBroker, OandaApiClient, OandaConfig, OandaEnvironment,
-    OandaAccount, OandaPosition, OandaOrder, OandaOrderType,
+    OandaBroker,
+    OandaConfig,
+    OandaEnvironment,
+    OandaAccount,
+    OandaPosition,
+    OandaOrder,
+    OandaApiClient,
+    OandaTimeframe,
     create_oanda_broker
 )
-from src.models import Symbol, Order, OrderType, OrderStatus, PositionSide, Position
+from src.engine.interfaces import Symbol, Order, OrderType, OrderStatus, PositionSide
 
 
 class TestOandaConfig:
     """Test OANDA configuration"""
     
-    def test_config_creation(self):
+    def test_config_initialization(self):
         """Test configuration initialization"""
         config = OandaConfig(
             api_key="test_key",
             account_id="123-456-789",
-            environment=OandaEnvironment.PRACTICE,
+            environment=OandaEnvironment.SANDBOX,
             timeout=60
         )
         
         assert config.api_key == "test_key"
         assert config.account_id == "123-456-789"
-        assert config.environment == OandaEnvironment.PRACTICE
+        assert config.environment == OandaEnvironment.SANDBOX
         assert config.timeout == 60
     
     def test_get_base_url(self):
@@ -36,10 +41,10 @@ class TestOandaConfig:
         config = OandaConfig(
             api_key="test_key",
             account_id="123-456-789",
-            environment=OandaEnvironment.LIVE
+            environment=OandaEnvironment.SANDBOX
         )
         
-        assert config.get_base_url() == "https://api-fxtrade.oanda.com"
+        assert config.get_base_url() == "https://api-sandbox.oanda.com"
     
     def test_get_headers(self):
         """Test header generation"""
@@ -88,7 +93,7 @@ class TestOandaPosition:
     """Test OANDA position model"""
     
     def test_position_from_response_long(self):
-        """Test position creation for long position"""
+        """Test position creation for long side"""
         response = {
             "instrument": "EUR_USD",
             "long": {
@@ -114,7 +119,7 @@ class TestOandaPosition:
         assert position.unrealized_pl == Decimal("50.00")
     
     def test_position_from_response_short(self):
-        """Test position creation for short position"""
+        """Test position creation for short side"""
         response = {
             "instrument": "EUR_USD",
             "long": {
@@ -454,15 +459,18 @@ class TestOandaBroker:
             stop_loss=None,
             take_profit=None,
             status="FILLED",
-            create_time=datetime.now()
+            create_time=datetime.now(),
+            cancel_time=None,
+            fill_time=None,
         )
         
         with patch.object(broker._client, 'create_market_order', return_value=mock_oanda_order):
             order = Order(
+                id="",
                 symbol=Symbol("EURUSD"),
                 order_type=OrderType.MARKET,
                 quantity=Decimal("1000"),
-                side="buy"
+                side="BUY",
             )
             
             success = await broker.submit_order(order)
@@ -486,16 +494,19 @@ class TestOandaBroker:
             stop_loss=None,
             take_profit=None,
             status="PENDING",
-            create_time=datetime.now()
+            create_time=datetime.now(),
+            cancel_time=None,
+            fill_time=None,
         )
         
         with patch.object(broker._client, 'create_limit_order', return_value=mock_oanda_order):
             order = Order(
+                id="",
                 symbol=Symbol("EURUSD"),
                 order_type=OrderType.LIMIT,
                 quantity=Decimal("1000"),
-                side="buy",
-                limit_price=Decimal("1.1234")
+                side="BUY",
+                price=Decimal("1.1234"),
             )
             
             success = await broker.submit_order(order)
@@ -507,18 +518,25 @@ class TestOandaBroker:
     async def test_cancel_order(self, broker):
         """Test cancelling order"""
         broker._connected = True
-        
-        order = Order(
-            symbol=Symbol("EURUSD"),
-            order_type=OrderType.MARKET,
-            quantity=Decimal("1000"),
-            side="buy"
-        )
-        order.id = "12345"
+        broker._orders = {"12345": OandaOrder(
+            id="12345",
+            instrument="EUR_USD",
+            type="MARKET",
+            side="buy",
+            units=Decimal("1000"),
+            price=None,
+            stop_loss=None,
+            take_profit=None,
+            status="PENDING",
+            create_time=datetime.now(),
+            cancel_time=None,
+            fill_time=None,
+        )}
         
         with patch.object(broker._client, 'cancel_order', return_value=True):
-            success = await broker.cancel_order(order)
+            success = await broker.cancel_order_by_id("12345")
             assert success
+            assert broker._orders["12345"].status == "CANCELLED"
     
     @pytest.mark.asyncio
     async def test_get_account_info(self, broker):
@@ -569,7 +587,7 @@ class TestOandaBroker:
             assert len(positions) == 1
             assert positions[0].symbol.ticker == "EURUSD"
             assert positions[0].side == PositionSide.LONG
-            assert positions[0].size == Decimal("1000")
+            assert positions[0].quantity == Decimal("1000")
     
     @pytest.mark.asyncio
     async def test_get_orders(self, broker):
@@ -586,7 +604,9 @@ class TestOandaBroker:
             stop_loss=None,
             take_profit=None,
             status="FILLED",
-            create_time=datetime.now()
+            create_time=datetime.now(),
+            cancel_time=None,
+            fill_time=None,
         )
         
         with patch.object(broker, '_refresh_orders'):
@@ -746,7 +766,9 @@ class TestIntegration:
             stop_loss=None,
             take_profit=None,
             status="FILLED",
-            create_time=datetime.now()
+            create_time=datetime.now(),
+            cancel_time=None,
+            fill_time=None,
         )
         
         with patch.object(broker._client, 'connect'), \
@@ -761,10 +783,11 @@ class TestIntegration:
             
             # Submit order
             order = Order(
+                id="",
                 symbol=Symbol("EURUSD"),
                 order_type=OrderType.MARKET,
                 quantity=Decimal("1000"),
-                side="buy"
+                side="BUY",
             )
             
             success = await broker.submit_order(order)

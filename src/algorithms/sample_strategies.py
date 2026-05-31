@@ -3,10 +3,10 @@
 from decimal import Decimal
 from typing import Optional
 
-from .strategy import Strategy, StrategyConfig
+from .strategy import Strategy
 from .indicators import SMA, RSI, MACD, BollingerBands
-from ..data.models import Symbol, Bar
-from ..trading.models import Order, OrderSide, OrderType
+from ..data.models import Bar
+from ..trading.models import OrderSide
 
 
 class SMAStrategy(Strategy):

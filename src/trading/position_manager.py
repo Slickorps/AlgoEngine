@@ -1,6 +1,5 @@
 """Position management for AlgoEngine"""
 
-from collections import defaultdict
 from typing import Dict, List, Optional
 from decimal import Decimal
 

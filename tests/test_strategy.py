@@ -2,13 +2,11 @@
 
 import pytest
 from decimal import Decimal
-from datetime import datetime
 
 from src.algorithms.strategy import Strategy, StrategyConfig, StrategyState
 from src.portfolio.portfolio import Portfolio
 from src.engine.events import EventBus
-from src.data.models import Symbol, Bar, Resolution
-from src.trading.models import OrderSide, OrderType, Fill
+from src.data.models import Symbol
 
 
 class MockStrategy(Strategy):

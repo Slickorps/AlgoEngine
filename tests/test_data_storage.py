@@ -5,10 +5,8 @@ import pytest
 # Skip all tests if pyarrow not available
 pytest.importorskip("pyarrow")
 
-import tempfile
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 
 from src.data.models import Symbol, Bar, Tick, Resolution
 from src.data.storage import DataStorage

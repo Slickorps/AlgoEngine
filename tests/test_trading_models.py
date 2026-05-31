@@ -1,12 +1,10 @@
 """Tests for trading models"""
 
-import pytest
 from datetime import datetime
 from decimal import Decimal
 
 from src.trading.models import (
-    OrderType, OrderSide, OrderStatus, TimeInForce,
-    Order, Fill, Position, Trade, CommissionModel, SlippageModel
+    OrderType, OrderSide, OrderStatus, Order, Fill, Position, Trade, CommissionModel, SlippageModel
 )
 from src.data.models import Symbol
 

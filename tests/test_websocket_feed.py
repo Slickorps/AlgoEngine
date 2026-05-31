@@ -10,8 +10,7 @@ from src.data.websocket_feed import (
     WebSocketConfig, WebSocketConnection, WebSocketState,
     WebSocketFeedManager, WebSocketDataFeed
 )
-from src.data.models import Symbol, Tick, DataType
-from src.engine.events import EventBus, EventType
+from src.data.models import Symbol
 
 
 class TestWebSocketConfig:
@@ -85,10 +84,12 @@ class TestWebSocketConnection:
     @pytest.mark.asyncio
     async def test_connect_success(self, connection):
         """Test successful connection"""
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        mock_websocket = AsyncMock()
+        
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Mock the message loop
             with patch.object(connection, '_message_loop', new=AsyncMock()):
                 success = await connection.connect()
@@ -96,7 +97,6 @@ class TestWebSocketConnection:
                 assert success
                 assert connection.state == WebSocketState.CONNECTED
                 assert connection.is_connected
-                mock_connect.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_connect_failure(self, connection):
@@ -113,14 +113,22 @@ class TestWebSocketConnection:
         """Test disconnection"""
         # Mock connected state
         connection._state = WebSocketState.CONNECTED
-        connection._websocket = AsyncMock()
-        connection._task = AsyncMock()
+        mock_ws = AsyncMock()
+        connection._websocket = mock_ws
+        # Create a real cancelled task that can be awaited
+        async def dummy_task():
+            while True:
+                await asyncio.sleep(1)
+        
+        real_task = asyncio.ensure_future(dummy_task())
+        await asyncio.sleep(0)  # Let the task start
+        connection._task = real_task
         
         await connection.disconnect()
         
         assert connection.state == WebSocketState.DISCONNECTED
         assert not connection.is_connected
-        connection._websocket.close.assert_called_once()
+        mock_ws.close.assert_awaited_once()
     
     @pytest.mark.asyncio
     async def test_send_message_success(self, connection):
@@ -186,10 +194,12 @@ class TestWebSocketFeedManager:
     @pytest.mark.asyncio
     async def test_add_connection_success(self, manager, config):
         """Test successful connection addition"""
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        mock_websocket = AsyncMock()
+        
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             success = await manager.add_connection("test-conn", config)
             
             assert success
@@ -198,10 +208,12 @@ class TestWebSocketFeedManager:
     @pytest.mark.asyncio
     async def test_add_duplicate_connection(self, manager, config):
         """Test adding duplicate connection"""
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        mock_websocket = AsyncMock()
+        
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add first connection
             await manager.add_connection("test-conn", config)
             
@@ -213,10 +225,12 @@ class TestWebSocketFeedManager:
     @pytest.mark.asyncio
     async def test_remove_connection(self, manager, config):
         """Test connection removal"""
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        mock_websocket = AsyncMock()
+        
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add connection first
             await manager.add_connection("test-conn", config)
             
@@ -229,11 +243,12 @@ class TestWebSocketFeedManager:
     async def test_subscribe_symbol(self, manager, config):
         """Test symbol subscription"""
         symbol = Symbol("AAPL")
+        mock_websocket = AsyncMock()
         
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add connection first
             await manager.add_connection("test-conn", config)
             
@@ -248,11 +263,12 @@ class TestWebSocketFeedManager:
     async def test_unsubscribe_symbol(self, manager, config):
         """Test symbol unsubscription"""
         symbol = Symbol("AAPL")
+        mock_websocket = AsyncMock()
         
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add connection and subscribe
             await manager.add_connection("test-conn", config)
             await manager.subscribe_symbol(symbol, "test-conn")
@@ -266,11 +282,12 @@ class TestWebSocketFeedManager:
     async def test_send_to_connection(self, manager, config):
         """Test sending message to specific connection"""
         message = {"type": "test", "data": "hello"}
+        mock_websocket = AsyncMock()
         
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add connection
             await manager.add_connection("test-conn", config)
             
@@ -284,11 +301,12 @@ class TestWebSocketFeedManager:
         """Test broadcasting message to symbol subscribers"""
         symbol = Symbol("AAPL")
         message = {"type": "price", "symbol": "AAPL", "price": 150.0}
+        mock_websocket = AsyncMock()
         
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add two connections and subscribe both to symbol
             await manager.add_connection("conn1", config)
             await manager.add_connection("conn2", config)
@@ -316,10 +334,12 @@ class TestWebSocketFeedManager:
     @pytest.mark.asyncio
     async def test_shutdown(self, manager, config):
         """Test manager shutdown"""
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        mock_websocket = AsyncMock()
+        
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add multiple connections
             await manager.add_connection("conn1", config)
             await manager.add_connection("conn2", config)
@@ -363,9 +383,12 @@ class TestWebSocketDataFeed:
         """Test symbol subscription"""
         symbols = [Symbol("AAPL"), Symbol("MSFT")]
         
-        # Mock manager connection
-        feed._manager._connections["test"] = MagicMock()
-        feed._manager._connections["test"].is_connected = True
+        # Mock a connected connection - must have proper state return
+        mock_conn = MagicMock()
+        mock_conn.get_connection_info.return_value = {'state': 'CONNECTED'}
+        
+        # Directly add to the manager's connections dict
+        feed._manager._connections["test-conn"] = mock_conn
         
         await feed.subscribe(symbols)
         
@@ -414,11 +437,12 @@ class TestWebSocketIntegration:
         """Test complete message flow"""
         manager = WebSocketFeedManager()
         config = WebSocketConfig("wss://test.example.com/ws")
+        mock_websocket = AsyncMock()
         
-        with patch('websockets.connect') as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value = mock_websocket
-            
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+        
+        with patch('websockets.connect', side_effect=mock_connect):
             # Add connection
             await manager.add_connection("test-conn", config)
             

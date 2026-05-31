@@ -2,17 +2,15 @@
 
 import asyncio
 import json
-import logging
 import websockets
-from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Set, Callable, Any
 from enum import Enum, auto
 import ssl
 from urllib.parse import urlparse
 
-from .feed import DataFeed, StreamingDataFeed
-from .models import Symbol, Tick, Bar, DataType, MarketData
+from .feed import StreamingDataFeed
+from .models import Symbol
 from ..engine.events import EventBus, EventType
 from ..utils.logger import get_logger
 
@@ -533,6 +531,18 @@ class WebSocketDataFeed(StreamingDataFeed):
         
         return None
     
+    async def _stream_loop(self) -> None:
+        """Main streaming loop - process incoming WebSocket data"""
+        while self._running:
+            try:
+                # In a real implementation, this would process data from the WebSocket
+                # For this base class, simply yield to allow other tasks to run
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in WebSocket stream loop: {e}")
+
     def get_feed_status(self) -> Dict[str, Any]:
         """Get comprehensive feed status"""
         return {

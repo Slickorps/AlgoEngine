@@ -3,21 +3,18 @@
 import asyncio
 import aiohttp
 import base64
-import hashlib
-import hmac
-import json
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
-from enum import Enum, auto
-from typing import Dict, List, Optional, Any, Callable, Tuple
+from enum import Enum
+from typing import Dict, List, Optional, Any, Callable
 from urllib.parse import urljoin
 
-from ..engine.interfaces import ITransactionHandler, IResultHandler, PositionSide
+from ..engine.interfaces import ITransactionHandler, IResultHandler
 from ..trading.models import Symbol, Order, OrderType, OrderSide, OrderStatus, Position
 from ..utils.logger import get_logger
-from ..utils.error_handler import retry_async, RetryConfig, RetryExhaustedError
+from ..utils.error_handler import retry_async, RetryConfig
 
 logger = get_logger("adapters.ig")
 

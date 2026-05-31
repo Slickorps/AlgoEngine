@@ -1,14 +1,11 @@
 """Historical data storage for AlgoEngine"""
 
 import sqlite3
-import json
-import zlib
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Iterator
+from typing import List, Optional, Dict, Any
 import pandas as pd
-from dataclasses import asdict
 
 # Optional pyarrow import - fallback to CSV if not available
 try:
@@ -18,7 +15,7 @@ try:
 except ImportError:
     HAS_PYARROW = False
 
-from .models import Symbol, Bar, Tick, Resolution, DataType, MarketData
+from .models import Symbol, Bar, Tick, Resolution, DataType
 from ..utils.logger import get_logger
 from ..utils.config import get_config
 

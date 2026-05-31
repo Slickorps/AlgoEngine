@@ -2,9 +2,8 @@
 
 from collections import defaultdict
 from typing import Dict, List, Optional, Callable, Any
-from decimal import Decimal
 
-from .models import Order, OrderStatus, Fill, OrderSide
+from .models import Order, Fill
 from ..data.models import Symbol
 from ..utils.logger import get_logger
 

@@ -5,9 +5,9 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 from src.backtesting.engine import BacktestEngine, BacktestConfig
-from src.backtesting.results import BacktestResults, TradeRecord
+from src.backtesting.results import BacktestResults
 from src.algorithms.sample_strategies import SMAStrategy
-from src.data.models import Symbol, Bar, Resolution
+from src.data.models import Symbol, Bar
 
 
 class TestBacktestConfig:

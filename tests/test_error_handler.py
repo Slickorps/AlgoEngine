@@ -1,7 +1,6 @@
 """Tests for unified error handling, retry, and circuit breaker module."""
 
 import asyncio
-from typing import Optional
 
 import pytest
 
@@ -15,8 +14,6 @@ from src.utils.error_handler import (
     ErrorHandlerConfig,
     # Results
     ErrorResult,
-    CircuitBreakerStats,
-    # Core classes
     CircuitBreaker,
     CircuitBreakerOpenError,
     # Retry

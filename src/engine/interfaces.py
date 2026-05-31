@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Callable, Set
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 

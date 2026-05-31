@@ -1,6 +1,5 @@
 """Tests for technical indicators"""
 
-import pytest
 from decimal import Decimal
 
 from src.algorithms.indicators import SMA, EMA, RSI, MACD, BollingerBands, ATR, IndicatorManager

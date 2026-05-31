@@ -7,9 +7,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
-from typing import Dict, List, Optional, Callable, Any, Set
+from typing import Dict, List, Optional, Callable, Any
 from threading import Lock
-import heapq
 
 from ..utils.logger import get_logger
 

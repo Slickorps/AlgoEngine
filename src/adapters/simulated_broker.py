@@ -3,12 +3,12 @@
 import asyncio
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 import random
 
 from ..trading.execution_engine import BrokerAdapter
-from ..trading.models import Order, OrderStatus, Fill, OrderSide, OrderType
-from ..data.models import Symbol, Tick
+from ..trading.models import Order, OrderStatus, Fill, OrderType
+from ..data.models import Tick
 from ..utils.logger import get_logger
 
 logger = get_logger("adapters.simulated_broker")

@@ -11,13 +11,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import random
-import time
 import traceback
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum, auto
 from typing import (
-    Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union,
+    Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Type, TypeVar,
 )
 
 from .logger import get_logger

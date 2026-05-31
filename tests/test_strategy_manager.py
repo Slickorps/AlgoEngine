@@ -4,7 +4,7 @@ import pytest
 from decimal import Decimal
 
 from src.algorithms.strategy_manager import StrategyManager
-from src.algorithms.strategy import Strategy, StrategyConfig
+from src.algorithms.strategy import StrategyConfig
 from src.algorithms.sample_strategies import SMAStrategy
 from src.portfolio.portfolio import Portfolio
 from src.engine.events import EventBus

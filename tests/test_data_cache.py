@@ -2,10 +2,9 @@
 
 import pytest
 import asyncio
-from datetime import datetime
 
 from src.data.feed import DataCache
-from src.data.models import Symbol, DataType, Bar, Resolution
+from src.data.models import Symbol, DataType, Resolution
 
 
 class TestDataCache:
@@ -46,7 +45,6 @@ class TestDataCache:
         await cache.set(symbol, DataType.BAR, [1, 2, 3], Resolution.DAILY)
         
         # Wait for expiration
-        import asyncio
         await asyncio.sleep(1.1)
         
         # Should be expired

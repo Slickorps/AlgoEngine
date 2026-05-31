@@ -4,27 +4,25 @@ and provides real-time risk management for production trading.
 """
 
 import asyncio
-import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
-from enum import Enum, auto
+from enum import Enum
 from typing import (
-    Any, Callable, Dict, List, Optional, Set, Tuple, Type
+    Any, Callable, Dict, List, Optional, Set, Tuple
 )
 
 from .models import (
-    Order, OrderType, OrderSide, OrderStatus, Fill, Trade,
-    Position, CommissionModel, SlippageModel, TimeInForce
+    Order, OrderStatus, Fill, Position
 )
 from .order_manager import OrderManager
 from .position_manager import PositionManager
 from .execution_engine import ExecutionEngine, BrokerAdapter
 from ..data.models import Symbol, Tick, Bar, MarketData
-from ..engine.events import Event, EventBus, EventType, get_event_bus
+from ..engine.events import Event, EventType, get_event_bus
 from ..engine.interfaces import IPortfolio
-from ..risk.risk_manager import RiskManager, RiskContext
+from ..risk.risk_manager import RiskManager
 from ..utils.logger import get_logger
 from ..utils.error_handler import (
     CircuitBreaker,
@@ -462,7 +460,7 @@ class LiveEngine:
             return True
 
         try:
-            logger.info(f"Connecting to broker...")
+            logger.info("Connecting to broker...")
             connected = await asyncio.wait_for(
                 self._broker.connect(),
                 timeout=self._config.broker_timeout

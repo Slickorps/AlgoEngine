@@ -8,7 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from ..data.feed import DataFeed
-from ..data.models import Symbol, Bar, Tick, Resolution
+from ..data.models import Symbol, Bar, Resolution
 from ..data.storage import DataStorage
 from ..utils.logger import get_logger
 

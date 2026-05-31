@@ -2,16 +2,14 @@
 
 import asyncio
 import hashlib
-import json
-import time
 from collections import deque, defaultdict
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, auto
 from typing import Dict, List, Optional, Set, Tuple, Callable, Any
 from threading import Lock
 
-from .models import Symbol, Tick, Bar, MarketData
+from .models import Symbol, MarketData
 from ..utils.logger import get_logger
 
 logger = get_logger("data.sync")
@@ -168,6 +166,10 @@ class SequenceManager:
             self._received_sequences.add(sequence)
             self._sequence_window.append(sequence)
             
+            # Track current sequence as max received
+            if sequence > self._current_seq:
+                self._current_seq = sequence
+            
             # Detect gap
             gap = None
             if sequence > self._expected_next:
@@ -184,9 +186,9 @@ class SequenceManager:
             # Update expected next
             if sequence >= self._expected_next:
                 self._expected_next = sequence + 1
-                
-                # Check if any gaps can be resolved
-                self._resolve_gaps()
+            
+            # Check if any gaps can be resolved (even for out-of-order delivery)
+            self._resolve_gaps()
             
             return True, gap
     

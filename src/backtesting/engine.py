@@ -1,17 +1,16 @@
 """Backtest engine for AlgoEngine"""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from typing import List, Dict, Optional, Type, Any
-import asyncio
 
 from ..algorithms.strategy import Strategy, StrategyConfig
 from ..algorithms.strategy_manager import StrategyManager
 from ..portfolio.portfolio import Portfolio
 from ..engine.events import EventBus, EventType
 from ..engine.timekeeper import TimeKeeper, TimeMode
-from ..data.models import Symbol, Bar, Tick, Resolution
+from ..data.models import Symbol, Bar, Resolution
 from ..adapters.simulated_broker import SimulatedBroker
 from ..trading.execution_engine import ExecutionEngine
 from ..trading.order_manager import OrderManager
@@ -63,13 +62,8 @@ class BacktestEngine:
         )
         
         # Initialize execution engine
-        self._execution_engine = ExecutionEngine(
-            order_manager=self._order_manager,
-            position_manager=self._position_manager,
-            portfolio=self._portfolio,
-            event_bus=self._event_bus
-        )
-        self._execution_engine.set_broker_adapter(self._broker)
+        self._execution_engine = ExecutionEngine()
+        self._execution_engine._broker = self._broker
         
         # Initialize strategy manager
         self._strategy_manager = StrategyManager(

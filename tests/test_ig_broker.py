@@ -1,9 +1,7 @@
 """Tests for IG Markets broker adapter"""
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+from unittest.mock import MagicMock, patch
 from decimal import Decimal
 
 from src.adapters.ig_broker import (
@@ -14,8 +12,7 @@ from src.adapters.ig_broker import (
     create_ig_broker, IGError, IGAuthenticationError, IGConnectionError,
     IGRateLimitError, IGApiError,
 )
-from src.engine.interfaces import PositionSide
-from src.trading.models import Symbol, Order, OrderType, OrderSide, OrderStatus, Position
+from src.trading.models import Symbol, Order, OrderType, OrderSide, OrderStatus
 
 
 class TestIGConfig:

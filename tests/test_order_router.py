@@ -1,11 +1,9 @@
 """Tests for order routing system"""
 
-import asyncio
 import pytest
 from decimal import Decimal
-from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.trading.models import Order, OrderSide, OrderType, Fill, CommissionModel
+from src.trading.models import Order, OrderSide, OrderType
 from src.trading.execution_engine import BrokerAdapter
 from src.trading.order_router import (
     OrderRouter,

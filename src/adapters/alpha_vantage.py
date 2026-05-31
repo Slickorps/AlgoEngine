@@ -8,7 +8,7 @@ import aiohttp
 import pandas as pd
 
 from ..data.feed import DataFeed
-from ..data.models import Symbol, Bar, Resolution
+from ..data.models import Symbol, Resolution
 from ..utils.logger import get_logger
 from ..utils.config import get_config
 

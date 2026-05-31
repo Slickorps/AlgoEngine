@@ -2,11 +2,10 @@
 
 import logging
 import logging.handlers
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 
 class ColoredFormatter(logging.Formatter):

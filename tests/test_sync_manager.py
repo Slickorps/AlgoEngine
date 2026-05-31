@@ -1,18 +1,15 @@
 """Tests for data synchronization management"""
 
-import asyncio
 import pytest
-import time
 from datetime import datetime, timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
 
 from src.data.sync_manager import (
     SequenceManager, DataSyncManager, DataPacket, SyncGap,
     SyncState, SyncStatus, SyncReporter, create_sync_manager,
     SequenceRange
 )
-from src.data.models import Symbol, Tick, Bar, Resolution
+from src.data.models import Symbol, Tick
 
 
 class TestSequenceRange:
@@ -650,7 +647,7 @@ class TestIntegration:
         # Check sync status
         status = manager.get_sync_status(symbol)
         assert status['gap_count'] == 2
-        assert status['total_gaps'] == 3  # Missing sequences 3, 6 (count = 1 + 1 = 2)
+        assert status['total_gaps'] == 2  # Missing sequences 3, 6 (2 gaps total = 1 + 1)
         
         # Fill one gap
         tick3 = Tick(

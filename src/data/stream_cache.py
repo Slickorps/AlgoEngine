@@ -1,16 +1,14 @@
 """Streaming data cache with deduplication and backpressure control"""
 
 import asyncio
-import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
-from typing import Dict, List, Optional, Set, Callable, Any, Iterator
+from typing import Dict, List, Optional, Set, Any
 from threading import Lock
-import heapq
 
-from .models import Symbol, Tick, Bar, MarketData, DataType
+from .models import Symbol, Tick, Bar, MarketData
 from ..utils.logger import get_logger
 
 logger = get_logger("data.stream_cache")
@@ -24,6 +22,17 @@ class CachePolicy(Enum):
     COUNT = auto()      # Keep by count
 
 
+# Global monotonic sequence counter for LRU ordering
+_lru_seq_counter = 0
+
+
+def _next_lru_seq() -> int:
+    """Get next monotonic sequence number for LRU ordering"""
+    global _lru_seq_counter
+    _lru_seq_counter += 1
+    return _lru_seq_counter
+
+
 @dataclass
 class CacheEntry:
     """Single cache entry with metadata"""
@@ -31,11 +40,13 @@ class CacheEntry:
     timestamp: datetime
     access_count: int = 0
     last_access: datetime = field(default_factory=datetime.now)
+    access_seq: int = field(default_factory=_next_lru_seq)
     
     def touch(self) -> None:
         """Update access metadata"""
         self.access_count += 1
         self.last_access = datetime.now()
+        self.access_seq = _next_lru_seq()
 
 
 @dataclass
@@ -165,8 +176,8 @@ class StreamCache:
             return
         
         if self._policy == CachePolicy.LRU:
-            # Find least recently used
-            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k].last_access)
+            # Find least recently used (use access_seq as tiebreaker for timestamp resolution)
+            oldest_key = min(self._cache.keys(), key=lambda k: (self._cache[k].last_access, self._cache[k].access_seq))
         elif self._policy == CachePolicy.FIFO:
             # Find oldest entry
             oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k].timestamp)

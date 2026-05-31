@@ -2,13 +2,13 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
-from typing import List, Dict, Set, Optional, Callable, Any, AsyncIterator
+from datetime import datetime
+from typing import List, Dict, Set, Optional, Callable, Any
 from collections import defaultdict
 import pandas as pd
 
 from .models import Symbol, Tick, Bar, Resolution, DataType, MarketData
-from ..engine.events import EventBus, Event, EventType, get_event_bus
+from ..engine.events import Event, EventType, get_event_bus
 from ..utils.logger import get_logger
 
 logger = get_logger("data.feed")

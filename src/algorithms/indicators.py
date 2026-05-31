@@ -1,8 +1,7 @@
 """Technical indicators for AlgoEngine"""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import List, Optional, Callable, Dict
+from typing import Optional, Dict
 from decimal import Decimal
 from collections import deque
 

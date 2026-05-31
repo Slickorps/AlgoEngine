@@ -4,11 +4,11 @@ import asyncio
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type
+from typing import List, Optional, Type
 
 from .interfaces import (
     IAlgorithm, IDataFeed, ITransactionHandler, IResultHandler,
-    IPortfolio, IExecutionModel, IRiskManager, Symbol, Order, OrderEvent
+    IPortfolio, IExecutionModel, IRiskManager, Order, OrderEvent
 )
 from .events import EventBus, Event, EventType, get_event_bus
 from .timekeeper import TimeKeeper

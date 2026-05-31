@@ -2,14 +2,13 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from decimal import Decimal
 from typing import Optional
 
 from .models import Order, OrderType, OrderStatus, Fill, OrderSide, CommissionModel, SlippageModel
 from .order_manager import OrderManager
 from .position_manager import PositionManager
 from ..data.models import Symbol, Tick
-from ..engine.events import EventBus, EventType, get_event_bus
+from ..engine.events import EventType, get_event_bus
 from ..utils.logger import get_logger
 
 logger = get_logger("trading.execution")

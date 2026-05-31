@@ -3,12 +3,11 @@
 import asyncio
 import pytest
 import time
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime
 
 from src.monitoring.latency_monitor import (
     LatencyCalculator, PerformanceMetrics, LatencyMonitor,
-    AlertThreshold, AlertSeverity, MetricType, Alert,
+    AlertThreshold, AlertSeverity, Alert,
     create_latency_threshold, create_throughput_threshold,
     get_monitor
 )
@@ -40,7 +39,8 @@ class TestAlertThreshold:
             warning=100.0,
             critical=500.0,
             emergency=1000.0,
-            direction="above"
+            direction="above",
+            cooldown_seconds=0.0
         )
         
         # Below warning - no alert
@@ -62,7 +62,8 @@ class TestAlertThreshold:
             warning=1000.0,
             critical=500.0,
             emergency=100.0,
-            direction="below"
+            direction="below",
+            cooldown_seconds=0.0
         )
         
         # Above warning - no alert
@@ -82,7 +83,9 @@ class TestAlertThreshold:
         threshold = AlertThreshold(
             metric_name="test",
             warning=100.0,
-            cooldown_seconds=1.0
+            cooldown_seconds=1.0,
+            critical=None,
+            emergency=None
         )
         
         # First trigger

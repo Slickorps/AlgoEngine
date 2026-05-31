@@ -1,12 +1,10 @@
 """Tests for data models"""
 
-import pytest
 from datetime import datetime
 from decimal import Decimal
 
 from src.data.models import (
-    Symbol, Tick, Bar, Quote, Trade, Resolution,
-    DataType, OrderBook, OrderBookLevel
+    Symbol, Tick, Bar, Quote, Trade, DataType, OrderBook, OrderBookLevel
 )
 
 
