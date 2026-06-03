@@ -1,0 +1,65 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: algoengine-ingress
+  namespace: algoengine
+  labels:
+    app.kubernetes.io/name: algoengine
+    app.kubernetes.io/part-of: algoengine
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - algoengine.example.com
+      secretName: algoengine-tls
+  rules:
+    - host: algoengine.example.com
+      http:
+        paths:
+          # Core engine API
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: algoengine
+                port:
+                  name: http
+          # Health endpoint
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: algoengine
+                port:
+                  name: http
+          # WebSocket endpoint
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: algoengine
+                port:
+                  name: http
+          # Monitoring endpoint
+          - path: /monitor
+            pathType: Prefix
+            backend:
+              service:
+                name: algoengine-monitor
+                port:
+                  number: 9090
+          # Dashboard (root)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: algoengine-dashboard
+                port:
+                  name: http

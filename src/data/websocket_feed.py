@@ -90,7 +90,7 @@ class WebSocketConnection:
         """Add message handler"""
         self._message_handlers.append(handler)
     
-    def add_error_handler(self, handler: Callable[[Exception], None]) -> None:
+    def add_error_handler(self, handler) -> None:
         """Add error handler"""
         self._error_handlers.append(handler)
     
@@ -250,7 +250,9 @@ class WebSocketConnection:
         # Call error handlers
         for handler in self._error_handlers:
             try:
-                handler(error)
+                result = handler(error)
+                if asyncio.iscoroutine(result):
+                    await result
             except Exception as e:
                 logger.error(f"Error in error handler: {e}")
         

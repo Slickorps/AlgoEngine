@@ -1,0 +1,47 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: algoengine
+
+commonLabels:
+  app.kubernetes.io/part-of: algoengine
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - redis.yaml
+  - engine.yaml
+  - dashboard.yaml
+  - monitor.yaml
+  - ingress.yaml
+
+configMapGenerator:
+  - name: algoengine-config-files
+    files:
+      - ../config/default.yaml
+    options:
+      labels:
+        app.kubernetes.io/name: algoengine
+        app.kubernetes.io/component: config
+
+secretGenerator:
+  - name: algoengine-secret
+    envs:
+      - ../.env.secret
+    options:
+      labels:
+        app.kubernetes.io/name: algoengine
+        app.kubernetes.io/component: secrets
+    type: Opaque
+
+images:
+  - name: algoengine
+    newName: algoengine
+    newTag: latest
+  - name: algoengine-dashboard
+    newName: algoengine-dashboard
+    newTag: latest
+  - name: algoengine-monitor
+    newName: algoengine-monitor
+    newTag: latest
