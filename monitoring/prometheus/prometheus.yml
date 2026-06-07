@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+  external_labels:
+    project: algoengine
+    environment: production
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+  alert_relabel_configs: []
+  rule_files:
+    - "alerting_rules.yml"
+
+scrape_configs:
+  - job_name: "algoengine-monitor"
+    scrape_interval: 10s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "monitor:9090"
+        labels:
+          service: algoengine-monitor
+          component: monitoring-agent
+
+  - job_name: "prometheus"
+    scrape_interval: 30s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "localhost:9090"
+        labels:
+          service: prometheus
+          component: monitoring-infrastructure

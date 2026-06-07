@@ -127,6 +127,24 @@ docker-clean: ## Remove Docker containers and images
 	@echo "$(YELLOW)[Docker] Cleaning up...$(NC)"
 	$(COMPOSE) down -v --rmi all --remove-orphans
 
+# ── Monitoring ─────────────────────────────────────────────────────────
+
+monitoring-up: ## Start Prometheus + Grafana monitoring stack
+	@echo "$(BLUE)[Monitoring] Starting Prometheus and Grafana...$(NC)"
+	$(COMPOSE) up -d prometheus grafana
+	@echo "$(GREEN)Prometheus: http://localhost:9091$(NC)"
+	@echo "$(GREEN)Grafana:    http://localhost:3001 (admin/admin)$(NC)"
+
+monitoring-down: ## Stop Prometheus + Grafana monitoring stack
+	@echo "$(BLUE)[Monitoring] Stopping Prometheus and Grafana...$(NC)"
+	$(COMPOSE) stop prometheus grafana
+
+monitoring-logs: ## Follow monitoring stack logs
+	$(COMPOSE) logs -f prometheus grafana
+
+monitoring-status: ## Show monitoring stack status
+	$(COMPOSE) ps prometheus grafana
+
 # ── Development ───────────────────────────────────────────────────────
 
 dev: ## Start development environment (engine + dashboard)

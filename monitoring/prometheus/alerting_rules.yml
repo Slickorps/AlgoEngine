@@ -1,0 +1,114 @@
+groups:
+  - name: algoengine_trading
+    interval: 30s
+    rules:
+      - alert: EngineDown
+        expr: algoengine_engine_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "AlgoEngine core engine is unreachable"
+          description: "The trading engine has been down for more than 2 minutes. Health check failed."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#engine-down"
+
+      - alert: EngineHighLatency
+        expr: algoengine_avg_latency_ms > 5000
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "High order execution latency detected"
+          description: "Average latency is {{ $value }}ms, exceeding the 5000ms threshold."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#high-latency"
+
+      - alert: HighDrawdown
+        expr: algoengine_max_drawdown > 20
+        for: 2m
+        labels:
+          severity: critical
+          category: risk
+        annotations:
+          summary: "Maximum drawdown exceeds risk threshold"
+          description: "Current max drawdown is {{ $value }}%, exceeding the 20% risk limit."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#drawdown-limit"
+
+      - alert: NegativePnL
+        expr: algoengine_total_pnl < -10000
+        for: 5m
+        labels:
+          severity: warning
+          category: risk
+        annotations:
+          summary: "Significant unrealized losses"
+          description: "Total P&L is {{ $value }}, below the warning threshold of -10000."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#pnl-alert"
+
+      - alert: WinRateDrop
+        expr: algoengine_win_rate < 30
+        for: 15m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Win rate has dropped significantly"
+          description: "Current win rate is {{ $value }}%, below the 30% warning threshold."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#win-rate-alert"
+
+      - alert: StaleData
+        expr: algoengine_scrape_duration_seconds > 30
+        for: 3m
+        labels:
+          severity: warning
+          category: data
+        annotations:
+          summary: "Engine scrape duration is abnormally high"
+          description: "Scrape duration is {{ $value }}s, indicating possible data pipeline issues."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#stale-data"
+
+      - alert: HighScrapeErrorRate
+        expr: rate(algoengine_scrape_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "High scrape error rate detected"
+          description: "Scrape error rate is {{ $value }} errors/second."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#scrape-errors"
+
+      - alert: NoActiveStrategies
+        expr: algoengine_active_strategies == 0
+        for: 10m
+        labels:
+          severity: warning
+          category: trading
+        annotations:
+          summary: "No active trading strategies running"
+          description: "There are zero active strategies. Verify strategy configurations."
+          runbook_url: "https://github.com/Slickorps/AlgoEngine/docs/runbooks.md#inactive-strategies"
+
+  - name: algoengine_system
+    interval: 30s
+    rules:
+      - alert: HighMemoryUsage
+        expr: algoengine_system_memory_bytes > 500 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "Monitor agent memory usage is high"
+          description: "Memory usage is {{ $value | humanize }}B, above the 500MB threshold."
+
+      - alert: HighGoroutineCount
+        expr: algoengine_system_goroutines > 1000
+        for: 10m
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "High goroutine count detected"
+          description: "Goroutine count is {{ $value }}, possible goroutine leak."
