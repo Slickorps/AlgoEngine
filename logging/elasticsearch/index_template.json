@@ -1,0 +1,83 @@
+{
+  "index_patterns": ["algoengine-logs-*"],
+  "data_stream": {},
+  "priority": 200,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.lifecycle.name": "algoengine-log-policy",
+      "index.lifecycle.rollover_alias": "algoengine-logs",
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "strings_as_keyword": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword",
+              "ignore_above": 1024,
+              "fields": {
+                "text": {
+                  "type": "text"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "timestamp": {
+          "type": "date",
+          "format": "yyyy-MM-dd HH:mm:ss,SSS"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "logger": {
+          "type": "keyword"
+        },
+        "component": {
+          "type": "keyword"
+        },
+        "message": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 4096
+            }
+          }
+        },
+        "module": {
+          "type": "keyword"
+        },
+        "funcName": {
+          "type": "keyword"
+        },
+        "lineno": {
+          "type": "integer"
+        },
+        "host": {
+          "type": "keyword"
+        },
+        "log_file": {
+          "type": "keyword"
+        },
+        "service": {
+          "type": "keyword"
+        },
+        "tags": {
+          "type": "keyword"
+        },
+        "environment": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}

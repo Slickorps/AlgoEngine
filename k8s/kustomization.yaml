@@ -16,6 +16,9 @@ resources:
   - monitor.yaml
   - prometheus.yaml
   - grafana.yaml
+  - elasticsearch.yaml
+  - logstash.yaml
+  - kibana.yaml
   - ingress.yaml
 
 configMapGenerator:

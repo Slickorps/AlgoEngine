@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elasticsearch-config
+  namespace: algoengine
+  labels:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: algoengine
+data:
+  elasticsearch.yml: |
+    cluster.name: algoengine-logs
+    node.name: algoengine-es-node
+    discovery.type: single-node
+    network.host: 0.0.0.0
+    http.port: 9200
+    xpack.security.enabled: false
+    xpack.security.enrollment.enabled: false
+    bootstrap.memory_lock: true
+    indices.lifecycle.history_index_enabled: true
+    indices.lifecycle.poll_interval: 30m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  namespace: algoengine
+  labels:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: algoengine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elasticsearch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elasticsearch
+        app.kubernetes.io/component: logging
+    spec:
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+          ports:
+            - containerPort: 9200
+              protocol: TCP
+              name: http
+            - containerPort: 9300
+              protocol: TCP
+              name: transport
+          env:
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+              subPath: elasticsearch.yml
+              readOnly: true
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 15
+      volumes:
+        - name: config
+          configMap:
+            name: elasticsearch-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: algoengine
+  labels:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/part-of: algoengine
+spec:
+  selector:
+    app.kubernetes.io/name: elasticsearch
+  ports:
+    - port: 9200
+      targetPort: 9200
+      protocol: TCP
+      name: http
+  type: ClusterIP

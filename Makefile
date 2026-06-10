@@ -145,6 +145,30 @@ monitoring-logs: ## Follow monitoring stack logs
 monitoring-status: ## Show monitoring stack status
 	$(COMPOSE) ps prometheus grafana
 
+# ── Logging (ELK Stack) ───────────────────────────────────────────────
+
+logging-up: ## Start Elasticsearch + Logstash + Kibana
+	@echo "$(BLUE)[Logging] Starting ELK stack...$(NC)"
+	$(COMPOSE) up -d elasticsearch logstash kibana
+	@echo "$(GREEN)Elasticsearch: http://localhost:9200$(NC)"
+	@echo "$(GREEN)Kibana:        http://localhost:5601$(NC)"
+	@echo "$(GREEN)Logstash API:  http://localhost:9600$(NC)"
+
+logging-down: ## Stop ELK stack
+	@echo "$(BLUE)[Logging] Stopping ELK stack...$(NC)"
+	$(COMPOSE) stop elasticsearch logstash kibana
+
+logging-logs: ## Follow ELK stack logs
+	$(COMPOSE) logs -f elasticsearch logstash kibana
+
+logging-status: ## Show ELK stack status
+	$(COMPOSE) ps elasticsearch logstash kibana
+
+logging-reset: ## Reset ELK stack volumes (CAUTION: deletes all log data)
+	@echo "$(RED)[Logging] WARNING: This will delete all log data!$(NC)"
+	$(COMPOSE) down -v elasticsearch logstash kibana
+	$(COMPOSE) up -d elasticsearch logstash kibana
+
 # ── Development ───────────────────────────────────────────────────────
 
 dev: ## Start development environment (engine + dashboard)

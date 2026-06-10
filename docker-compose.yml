@@ -172,12 +172,104 @@ services:
     networks:
       - algo-network
 
+  # ── Elasticsearch ───────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: algoengine-elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - cluster.name=algoengine-logs
+      - node.name=algoengine-es-node
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./logging/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - es-data:/usr/share/elasticsearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    networks:
+      - algo-network
+
+  # ── Logstash ─────────────────────────────────────────────────────────
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.14.0
+    container_name: algoengine-logstash
+    restart: unless-stopped
+    ports:
+      - "9600:9600"
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx512m
+      - ES_PASSWORD=""
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./logging/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./logging/logstash/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro
+      - ./logging/logstash/conf.d/algoengine.conf:/usr/share/logstash/pipeline/conf.d/algoengine.conf:ro
+      - ./logs:/var/log/algoengine:ro
+      - logstash-data:/usr/share/logstash/data
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9600"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - algo-network
+
+  # ── Kibana ───────────────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.14.0
+    container_name: algoengine-kibana
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./logging/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    networks:
+      - algo-network
+
 volumes:
   redis-data:
     driver: local
   prometheus-data:
     driver: local
   grafana-data:
+    driver: local
+  es-data:
+    driver: local
+  logstash-data:
     driver: local
 
 networks:

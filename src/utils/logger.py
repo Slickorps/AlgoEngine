@@ -1,5 +1,6 @@
 """Logging system for AlgoEngine"""
 
+import json
 import logging
 import logging.handlers
 import sys
@@ -25,6 +26,48 @@ class ColoredFormatter(logging.Formatter):
         reset = self.COLORS['RESET']
         record.levelname = f"{log_color}{record.levelname}{reset}"
         return super().format(record)
+
+
+class JsonFormatter(logging.Formatter):
+    """JSON log formatter for ELK stack compatibility.
+
+    Produces structured JSON log entries that Logstash can parse
+    without grok patterns, improving indexing performance and
+    enabling rich aggregations in Kibana.
+    """
+
+    def __init__(
+        self,
+        service: str = "algoengine",
+        environment: str = "production",
+        extra_fields: Optional[Dict[str, str]] = None,
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._environment = environment
+        self._extra_fields = extra_fields or {}
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_entry: Dict[str, object] = {
+            "timestamp": datetime.utcfromtimestamp(
+                record.created
+            ).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "module": record.module,
+            "funcName": record.funcName,
+            "lineno": record.lineno,
+            "message": record.getMessage(),
+            "service": self._service,
+            "environment": self._environment,
+        }
+        if record.exc_info and record.exc_info[1]:
+            log_entry["exception"] = str(record.exc_info[1])
+            log_entry["traceback"] = self.formatException(record.exc_info)
+        if record.stack_info:
+            log_entry["stack_info"] = record.stack_info
+        log_entry.update(self._extra_fields)
+        return json.dumps(log_entry, default=str)
 
 
 class Logger:
@@ -55,7 +98,9 @@ class Logger:
         console_output: bool = True,
         file_output: bool = True,
         max_bytes: int = 10 * 1024 * 1024,
-        backup_count: int = 5
+        backup_count: int = 5,
+        json_output: bool = False,
+        service_name: str = "algoengine",
     ) -> None:
         """Configure global logging settings"""
         if log_dir:
@@ -89,8 +134,13 @@ class Logger:
                 encoding='utf-8'
             )
             file_handler.setLevel(log_level)
-            file_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s"
-            file_handler.setFormatter(logging.Formatter(file_format))
+            if json_output:
+                file_handler.setFormatter(
+                    JsonFormatter(service=service_name)
+                )
+            else:
+                file_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s"
+                file_handler.setFormatter(logging.Formatter(file_format))
             root_logger.addHandler(file_handler)
             
             # Error file handler
@@ -102,7 +152,13 @@ class Logger:
                 encoding='utf-8'
             )
             error_handler.setLevel(logging.ERROR)
-            error_handler.setFormatter(logging.Formatter(file_format))
+            if json_output:
+                error_handler.setFormatter(
+                    JsonFormatter(service=service_name)
+                )
+            else:
+                file_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s"
+                error_handler.setFormatter(logging.Formatter(file_format))
             root_logger.addHandler(error_handler)
     
     def get_logger(self, name: str) -> logging.Logger:
@@ -122,12 +178,16 @@ def setup_logging(
     log_dir: Optional[str] = None,
     log_level: int = logging.INFO,
     console_output: bool = True,
-    file_output: bool = True
+    file_output: bool = True,
+    json_output: bool = False,
+    service_name: str = "algoengine",
 ) -> None:
     """Setup logging configuration"""
     Logger().setup(
         log_dir=log_dir,
         log_level=log_level,
         console_output=console_output,
-        file_output=file_output
+        file_output=file_output,
+        json_output=json_output,
+        service_name=service_name,
     )

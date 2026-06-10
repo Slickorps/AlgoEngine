@@ -1,0 +1,14 @@
+http.host: 0.0.0.0
+http.port: 9600
+
+config.reload.automatic: true
+config.reload.interval: 30s
+
+pipeline.batch.size: 125
+pipeline.batch.delay: 50
+
+queue.type: persisted
+queue.max_bytes: 1gb
+
+log.level: info
+log.format: json

@@ -1,0 +1,19 @@
+cluster.name: algoengine-logs
+node.name: algoengine-es-node
+discovery.type: single-node
+
+network.host: 0.0.0.0
+http.port: 9200
+
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl.enabled: false
+
+xpack.monitoring.collection.enabled: true
+
+bootstrap.memory_lock: true
+
+indices.lifecycle.history_index_enabled: true
+indices.lifecycle.poll_interval: 30m
+
+logger.level: INFO
