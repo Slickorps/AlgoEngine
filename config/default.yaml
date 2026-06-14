@@ -56,4 +56,12 @@ risk:
   stop_loss_pct: 0.02
   circuit_breaker_enabled: true
 
+plugins:
+  enabled: true
+  plugins_dir: plugins
+  auto_discover: false
+  sandbox_enabled: false
+  max_plugins: 50
+  timeout_seconds: 30
+
 custom: {}
