@@ -123,3 +123,130 @@ class TestPerformanceMetrics:
         assert metrics.total_return == 10.5
         assert metrics.sharpe_ratio == 1.5
         assert metrics.calmar_ratio == 5.0
+
+
+class TestEdgeCases:
+    """Edge case and uncovered branch tests for metrics"""
+
+    def test_calculate_var_different_confidence_levels(self):
+        returns = [0.05, -0.02, 0.03, -0.05, 0.01, -0.03, 0.02, -0.04, 0.06, -0.01]
+        var_95 = PerformanceCalculator.calculate_var(returns, confidence_level=0.95)
+        var_99 = PerformanceCalculator.calculate_var(returns, confidence_level=0.99)
+        assert var_95 < 0
+        assert var_99 <= var_95  # 99% VaR should be more negative
+
+    def test_calculate_var_empty(self):
+        var = PerformanceCalculator.calculate_var([])
+        assert var == 0.0
+
+    def test_sharpe_ratio_zero_volatility(self):
+        returns = [0.01, 0.01, 0.01, 0.01]
+        sharpe = PerformanceCalculator.calculate_sharpe_ratio(returns)
+        assert sharpe == 0.0
+
+    def test_sharpe_ratio_fewer_than_two(self):
+        sharpe = PerformanceCalculator.calculate_sharpe_ratio([0.01])
+        assert sharpe == 0.0
+
+    def test_calculate_returns_two_elements(self):
+        equity = [100, 110]
+        returns = PerformanceCalculator.calculate_returns(equity)
+        assert len(returns) == 1
+        assert returns[0] == pytest.approx(0.10)
+
+    def test_calculate_returns_single_element(self):
+        returns = PerformanceCalculator.calculate_returns([100])
+        assert returns == []
+
+    def test_calculate_max_drawdown_single_element(self):
+        dd, dur = PerformanceCalculator.calculate_max_drawdown([100])
+        assert dd == 0.0
+        assert dur == 0
+
+    def test_calculate_max_drawdown_empty(self):
+        dd, dur = PerformanceCalculator.calculate_max_drawdown([])
+        assert dd == 0.0
+        assert dur == 0
+
+    def test_calculate_beta_valid(self):
+        strategy = [0.01, 0.02, -0.005, 0.015, 0.003]
+        benchmark = [0.005, 0.015, -0.002, 0.01, 0.002]
+        beta = PerformanceCalculator.calculate_beta(strategy, benchmark)
+        assert beta != 0.0
+
+    def test_calculate_beta_length_mismatch(self):
+        beta = PerformanceCalculator.calculate_beta([0.01, 0.02], [0.01])
+        assert beta == 0.0
+
+    def test_calculate_beta_fewer_than_two(self):
+        beta = PerformanceCalculator.calculate_beta([0.01], [0.01])
+        assert beta == 0.0
+
+    def test_calculate_beta_zero_benchmark_variance(self):
+        benchmark = [0.02, 0.02, 0.02, 0.02]
+        strategy = [0.01, 0.02, -0.005, 0.015]
+        beta = PerformanceCalculator.calculate_beta(strategy, benchmark)
+        assert beta == 0.0
+
+    def test_calculate_alpha_valid(self):
+        strategy = [0.001, 0.002, -0.001, 0.0015, 0.0005]
+        benchmark = [0.0005, 0.0015, -0.0002, 0.001, 0.0002]
+        alpha = PerformanceCalculator.calculate_alpha(strategy, benchmark)
+        assert isinstance(alpha, float)
+
+    def test_calculate_metrics_zero_days(self):
+        now = datetime.now()
+        snapshots = [
+            PortfolioSnapshot(
+                timestamp=now,
+                cash=Decimal("90000"),
+                positions_value=Decimal("10000"),
+                total_value=Decimal("100000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+            PortfolioSnapshot(
+                timestamp=now,
+                cash=Decimal("90000"),
+                positions_value=Decimal("11000"),
+                total_value=Decimal("101000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+        ]
+        metrics = PerformanceCalculator.calculate_metrics(snapshots)
+        assert metrics is not None
+        assert metrics.annualized_return == metrics.total_return
+
+    def test_calculate_metrics_no_drawdown(self):
+        now = datetime.now()
+        snapshots = [
+            PortfolioSnapshot(
+                timestamp=now,
+                cash=Decimal("90000"),
+                positions_value=Decimal("10000"),
+                total_value=Decimal("100000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+            PortfolioSnapshot(
+                timestamp=now + timedelta(days=1),
+                cash=Decimal("91000"),
+                positions_value=Decimal("10000"),
+                total_value=Decimal("101000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+            PortfolioSnapshot(
+                timestamp=now + timedelta(days=2),
+                cash=Decimal("92000"),
+                positions_value=Decimal("10000"),
+                total_value=Decimal("102000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+        ]
+        metrics = PerformanceCalculator.calculate_metrics(snapshots)
+        assert metrics is not None
+        assert metrics.max_drawdown == 0.0
+        assert metrics.calmar_ratio == 0.0

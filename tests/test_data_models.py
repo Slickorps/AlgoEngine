@@ -4,7 +4,8 @@ from datetime import datetime
 from decimal import Decimal
 
 from src.data.models import (
-    Symbol, Tick, Bar, Quote, Trade, DataType, OrderBook, OrderBookLevel
+    Symbol, Tick, Bar, Quote, Trade, DataType, Resolution,
+    OrderBook, OrderBookLevel, FundamentalData, News
 )
 
 
@@ -182,3 +183,173 @@ class TestOrderBook:
         assert len(ob.bids) == 2
         assert len(ob.asks) == 2
         assert ob.data_type == DataType.ORDER_BOOK
+    
+    def test_orderbook_empty(self):
+        """Test order book with empty bids and asks"""
+        ob = OrderBook(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now(),
+            bids=[],
+            asks=[]
+        )
+        
+        assert len(ob.bids) == 0
+        assert len(ob.asks) == 0
+        assert isinstance(ob, OrderBook)
+    
+    def test_orderbook_bid_ask_imbalance(self):
+        """Test order book with asymmetric levels"""
+        bids = [OrderBookLevel(price=Decimal("100.00"), size=Decimal("500"))]
+        asks = [
+            OrderBookLevel(price=Decimal("100.05"), size=Decimal("100"), order_count=2),
+            OrderBookLevel(price=Decimal("100.10"), size=Decimal("200")),
+            OrderBookLevel(price=Decimal("100.15"), size=Decimal("150"), order_count=1),
+        ]
+        ob = OrderBook(
+            symbol=Symbol(ticker="MSFT"),
+            timestamp=datetime.now(),
+            bids=bids,
+            asks=asks
+        )
+        
+        assert len(ob.bids) == 1
+        assert len(ob.asks) == 3
+        assert ob.bids[0].price == Decimal("100.00")
+
+
+class TestFundamentalData:
+    """Test FundamentalData class"""
+    
+    def test_fundamental_data_creation(self):
+        """Test creating fundamental data"""
+        fd = FundamentalData(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now(),
+            pe_ratio=28.5,
+            eps=Decimal("6.14"),
+            market_cap=Decimal("2800000000000"),
+            dividend_yield=0.005,
+            book_value=Decimal("3.50")
+        )
+        
+        assert fd.data_type == DataType.FUNDAMENTAL
+        assert fd.pe_ratio == 28.5
+        assert fd.eps == Decimal("6.14")
+        assert fd.market_cap == Decimal("2800000000000")
+    
+    def test_fundamental_data_defaults(self):
+        """Test fundamental data with all defaults"""
+        fd = FundamentalData(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now()
+        )
+        
+        assert fd.pe_ratio is None
+        assert fd.eps is None
+        assert fd.market_cap is None
+        assert fd.dividend_yield is None
+        assert fd.book_value is None
+
+
+class TestNews:
+    """Test News class"""
+    
+    def test_news_creation(self):
+        """Test creating news item"""
+        news = News(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now(),
+            headline="Apple Reports Record Earnings",
+            content="Apple Inc. reported quarterly earnings that exceeded analyst expectations...",
+            source="Reuters",
+            sentiment=0.8
+        )
+        
+        assert news.data_type == DataType.NEWS
+        assert news.headline == "Apple Reports Record Earnings"
+        assert news.source == "Reuters"
+        assert news.sentiment == 0.8
+    
+    def test_news_negative_sentiment(self):
+        """Test news with negative sentiment"""
+        news = News(
+            symbol=Symbol(ticker="TSLA"),
+            timestamp=datetime.now(),
+            headline="Tesla Misses Delivery Targets",
+            content="Tesla reported Q3 deliveries below analyst estimates...",
+            source="Bloomberg",
+            sentiment=-0.6
+        )
+        
+        assert news.sentiment == -0.6
+        assert news.symbol.ticker == "TSLA"
+    
+    def test_news_default_sentiment(self):
+        """Test news with default sentiment"""
+        news = News(
+            symbol=Symbol(ticker="MSFT"),
+            timestamp=datetime.now(),
+            headline="Market Update",
+            content="General market conditions..."
+        )
+        
+        assert news.sentiment is None
+        assert news.source == ""
+
+
+class TestMarketDataTypeUnion:
+    """Test MarketData type union"""
+    
+    def test_tick_is_marketdata(self):
+        """Test Tick is assignable to MarketData"""
+        from src.data.models import MarketData
+        tick = Tick(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now(),
+            bid_price=Decimal("150.00"),
+            ask_price=Decimal("150.05"),
+            bid_size=Decimal("100"),
+            ask_size=Decimal("200")
+        )
+        data: MarketData = tick
+        assert data.symbol.ticker == "AAPL"
+    
+    def test_orderbook_is_marketdata(self):
+        """Test OrderBook is assignable to MarketData"""
+        from src.data.models import MarketData
+        ob = OrderBook(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now(),
+            bids=[],
+            asks=[]
+        )
+        data: MarketData = ob
+        assert data.data_type == DataType.ORDER_BOOK
+    
+    def test_fundamental_is_marketdata(self):
+        """Test FundamentalData is assignable to MarketData"""
+        from src.data.models import MarketData
+        fd = FundamentalData(
+            symbol=Symbol(ticker="AAPL"),
+            timestamp=datetime.now()
+        )
+        data: MarketData = fd
+        assert data.data_type == DataType.FUNDAMENTAL
+
+
+class TestResolutionEnum:
+    """Test Resolution enum values"""
+    
+    def test_resolution_values(self):
+        """Test all resolution enum values"""
+        assert Resolution.TICK.value == "tick"
+        assert Resolution.SECOND.value == "second"
+        assert Resolution.MINUTE.value == "minute"
+        assert Resolution.HOUR.value == "hour"
+        assert Resolution.DAILY.value == "daily"
+        assert Resolution.WEEKLY.value == "weekly"
+        assert Resolution.MONTHLY.value == "monthly"
+    
+    def test_resolution_count(self):
+        """Test total number of resolutions"""
+        assert len(Resolution) == 7

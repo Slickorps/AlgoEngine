@@ -120,3 +120,65 @@ class TestDataStorage:
         
         assert len(symbols) == 1
         assert "AAPL" in symbols[0]
+    
+    def test_load_bars_cache_miss_file_not_exists(self, temp_storage):
+        """Test load_bars returns empty when file doesn't exist"""
+        symbol = Symbol(ticker="XYZ")
+        bars = temp_storage.load_bars(symbol, Resolution.DAILY)
+        
+        assert bars == []
+    
+    def test_load_bars_cache_hit_after_save(self, temp_storage, sample_bars):
+        """Test load_bars returns data after save"""
+        symbol, bars = sample_bars
+        temp_storage.save_bars(symbol, bars, Resolution.DAILY)
+        
+        loaded = temp_storage.load_bars(symbol, Resolution.DAILY)
+        
+        assert len(loaded) == len(bars)
+        for orig, loaded_bar in zip(bars, loaded):
+            assert loaded_bar.open == orig.open
+            assert loaded_bar.close == orig.close
+    
+    def test_save_bars_creates_directory(self, tmp_path):
+        """Test save_bars creates the bar directory if it doesn't exist"""
+        data_dir = tmp_path / "nested" / "data"
+        storage = DataStorage(data_dir=str(data_dir))
+        symbol = Symbol(ticker="TEST")
+        bars = [
+            Bar(
+                symbol=symbol,
+                timestamp=datetime(2023, 1, 1),
+                open=Decimal("10"),
+                high=Decimal("12"),
+                low=Decimal("9"),
+                close=Decimal("11"),
+                volume=Decimal("1000"),
+                resolution=Resolution.DAILY
+            )
+        ]
+        
+        storage.save_bars(symbol, bars, Resolution.DAILY)
+        
+        assert storage._bar_dir.exists()
+        bar_file = storage._get_bar_path(symbol, Resolution.DAILY)
+        assert bar_file.exists()
+    
+    def test_bar_path_building(self, temp_storage):
+        """Test _get_bar_path returns correct path"""
+        symbol = Symbol(ticker="AAPL")
+        path = temp_storage._get_bar_path(symbol, Resolution.DAILY)
+        
+        assert path.parent == temp_storage._bar_dir
+        assert "AAPL" in str(path)
+        assert "daily" in str(path)
+    
+    def test_tick_path_building(self, temp_storage):
+        """Test _get_tick_path returns correct path"""
+        symbol = Symbol(ticker="AAPL")
+        date = datetime(2023, 6, 15)
+        path = temp_storage._get_tick_path(symbol, date)
+        
+        assert path.parent == temp_storage._tick_dir
+        assert "AAPL" in str(path)
+        assert "20230615" in str(path)

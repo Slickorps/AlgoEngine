@@ -140,3 +140,201 @@ class TestPortfolioSnapshot:
         )
         
         assert snapshot.leverage == 0.9  # 90% in positions
+
+
+class TestPortfolioEdgeCases:
+    """Edge case and uncovered branch tests for Portfolio"""
+
+    @pytest.fixture
+    def portfolio(self):
+        return Portfolio(initial_cash=Decimal("100000.00"))
+
+    def test_update_position_removes_when_zero_quantity(self, portfolio):
+        symbol = Symbol(ticker="AAPL")
+        position = Position(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            quantity=Decimal("100"),
+            avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("160.00"),
+        )
+        portfolio.update_position(position)
+        assert portfolio.get_position(symbol) is not None
+
+        position.quantity = Decimal("0")
+        portfolio.update_position(position)
+        assert portfolio.get_position(symbol) is None
+
+    def test_get_position_returns_none_for_unknown_symbol(self, portfolio):
+        unknown = Symbol(ticker="ZZZZ")
+        assert portfolio.get_position(unknown) is None
+
+    def test_total_value_with_multiple_positions(self, portfolio):
+        aapl = Symbol(ticker="AAPL")
+        tsla = Symbol(ticker="TSLA")
+
+        portfolio.update_position(Position(
+            symbol=aapl, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("160.00"),
+        ))
+        portfolio.update_position(Position(
+            symbol=tsla, side=OrderSide.BUY,
+            quantity=Decimal("50"), avg_entry_price=Decimal("200.00"),
+            current_price=Decimal("220.00"),
+        ))
+        portfolio.update_cash(Decimal("-15000.00"))  # paid for AAPL
+        portfolio.update_cash(Decimal("-10000.00"))  # paid for TSLA
+
+        expected_positions_value = Decimal("100") * Decimal("160.00") + Decimal("50") * Decimal("220.00")
+        expected_total = portfolio.cash + expected_positions_value
+
+        assert portfolio.positions_value == Decimal("27000.00")  # 16000 + 11000
+        assert portfolio.total_value == portfolio.cash + Decimal("27000.00")
+
+    def test_update_price_changes_position_values(self, portfolio):
+        symbol = Symbol(ticker="AAPL")
+        position = Position(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            quantity=Decimal("100"),
+            avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("150.00"),
+        )
+        portfolio.update_position(position)
+        portfolio.update_cash(Decimal("-15000.00"))
+
+        assert portfolio.positions_value == Decimal("15000.00")
+        assert portfolio.unrealized_pnl == Decimal("0")
+
+        position.current_price = Decimal("170.00")
+        portfolio.update_position(position)
+
+        assert portfolio.positions_value == Decimal("17000.00")
+        assert portfolio.unrealized_pnl == Decimal("2000.00")
+
+    def test_get_summary_with_positions_and_trades(self, portfolio):
+        symbol = Symbol(ticker="AAPL")
+        portfolio.update_position(Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("160.00"),
+        ))
+        trade = Trade(
+            trade_id="T1",
+            symbol=symbol,
+            entry_time=datetime.now(),
+            exit_time=datetime.now(),
+            side=OrderSide.BUY,
+            quantity=Decimal("10"),
+            entry_price=Decimal("140.00"),
+            exit_price=Decimal("155.00"),
+            realized_pnl=Decimal("150.00"),
+            commission=Decimal("1.00"),
+            slippage=Decimal("0.50"),
+        )
+        portfolio.record_trade(trade)
+
+        summary = portfolio.get_summary()
+
+        assert summary['position_count'] == 1
+        assert summary['trade_count'] == 1
+        assert summary['total_value'] > 0
+        assert isinstance(summary['timestamp'], str)
+
+    def test_snapshot_comparison(self, portfolio):
+        portfolio.take_snapshot()
+
+        symbol = Symbol(ticker="AAPL")
+        portfolio.update_position(Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("160.00"),
+        ))
+        portfolio.update_cash(Decimal("-15000.00"))
+
+        portfolio.take_snapshot()
+
+        snapshots = portfolio.get_snapshots()
+        assert len(snapshots) == 2
+        assert snapshots[0].total_value != snapshots[1].total_value
+        assert snapshots[0].positions_value == Decimal("0")
+        assert snapshots[1].positions_value == Decimal("16000.00")
+
+    def test_record_trade_short_side(self, portfolio):
+        trade = Trade(
+            trade_id="T_SHORT",
+            symbol=Symbol(ticker="TSLA"),
+            entry_time=datetime.now(),
+            exit_time=datetime.now(),
+            side=OrderSide.SELL,
+            quantity=Decimal("50"),
+            entry_price=Decimal("200.00"),
+            exit_price=Decimal("180.00"),
+            realized_pnl=Decimal("1000.00"),
+            commission=Decimal("2.00"),
+            slippage=Decimal("0.50"),
+        )
+        initial_cash = portfolio.cash
+        portfolio.record_trade(trade)
+
+        trade_value = trade.quantity * trade.exit_price
+        expected = initial_cash - trade_value - trade.commission - trade.slippage
+        assert portfolio.cash == expected
+
+    def test_unrealized_pnl_multiple_positions(self, portfolio):
+        aapl = Symbol(ticker="AAPL")
+        tsla = Symbol(ticker="TSLA")
+
+        portfolio.update_position(Position(
+            symbol=aapl, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("170.00"),
+        ))
+        portfolio.update_position(Position(
+            symbol=tsla, side=OrderSide.BUY,
+            quantity=Decimal("50"), avg_entry_price=Decimal("200.00"),
+            current_price=Decimal("190.00"),
+        ))
+
+        aapl_pnl = Decimal("100") * (Decimal("170.00") - Decimal("150.00"))
+        tsla_pnl = Decimal("50") * (Decimal("190.00") - Decimal("200.00"))
+        assert portfolio.unrealized_pnl == aapl_pnl + tsla_pnl
+
+    def test_get_exposure_by_symbol(self, portfolio):
+        aapl = Symbol(ticker="AAPL")
+        tsla = Symbol(ticker="TSLA")
+
+        portfolio.update_position(Position(
+            symbol=aapl, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("150.00"),
+        ))
+        portfolio.update_position(Position(
+            symbol=tsla, side=OrderSide.BUY,
+            quantity=Decimal("50"), avg_entry_price=Decimal("200.00"),
+            current_price=Decimal("200.00"),
+        ))
+        portfolio.update_cash(Decimal("-25000.00"))
+
+        exposure = portfolio.get_exposure_by_symbol()
+
+        total = portfolio.total_value
+        assert aapl in exposure
+        assert tsla in exposure
+        assert exposure[aapl] == Decimal("15000.00") / total
+        assert exposure[tsla] == Decimal("10000.00") / total
+
+    def test_get_exposure_by_symbol_zero_total(self):
+        portfolio = Portfolio(initial_cash=Decimal("0"))
+        assert portfolio.get_exposure_by_symbol() == {}
+
+    def test_leverage_zero_total_value(self, portfolio):
+        portfolio.update_cash(Decimal("-100000.00"))
+        portfolio.take_snapshot()
+        snapshots = portfolio.get_snapshots()
+        assert snapshots[0].leverage == 0.0
+
+    def test_total_return_percent_zero_initial(self):
+        portfolio = Portfolio(initial_cash=Decimal("0"))
+        assert portfolio.total_return_percent == 0.0

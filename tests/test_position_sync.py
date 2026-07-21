@@ -897,3 +897,122 @@ class TestSyncConfig:
         assert config.price_tolerance_pct == 5.0
         assert config.auto_reconcile is True
         assert config.sync_interval_seconds == 60.0
+
+
+class TestReconciliationEdgeCases:
+    """Edge case tests for reconciliation logic"""
+
+    def test_quantity_mismatch_broker_zero_quantity(self):
+        config = SyncConfig(max_quantity_diff_pct=5.0)
+        sync = PositionSynchronizer(config=config)
+        symbol = Symbol(ticker="AAPL")
+
+        broker_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("0"), avg_entry_price=Decimal("150.00"),
+        )
+        local_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("50"), avg_entry_price=Decimal("150.00"),
+        )
+
+        result = sync.sync([broker_pos], [local_pos])
+        qty_diffs = [d for d in result.differences if d.difference_type == DifferenceType.QUANTITY_MISMATCH]
+        assert len(qty_diffs) == 1
+        assert qty_diffs[0].severity == "critical"
+
+    def test_price_mismatch_broker_price_none(self):
+        sync = PositionSynchronizer()
+        symbol = Symbol(ticker="AAPL")
+
+        broker_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=None,
+        )
+        local_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("50.00"),
+        )
+
+        result = sync.sync([broker_pos], [local_pos])
+        # No price mismatch because broker avg_entry_price is None
+        price_diffs = [d for d in result.differences if d.difference_type == DifferenceType.PRICE_MISMATCH]
+        assert len(price_diffs) == 0
+
+    def test_price_mismatch_broker_price_zero(self):
+        sync = PositionSynchronizer()
+        symbol = Symbol(ticker="AAPL")
+
+        broker_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("0"),
+        )
+        local_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("50.00"),
+        )
+
+        result = sync.sync([broker_pos], [local_pos])
+        # Price zero => broker_avg_price > 0 is False, skips price check
+        price_diffs = [d for d in result.differences if d.difference_type == DifferenceType.PRICE_MISMATCH]
+        assert len(price_diffs) == 0
+
+    def test_reconcile_on_critical_only_with_critical_diffs(self):
+        config = SyncConfig(auto_reconcile=False, reconcile_on_critical=True)
+        sync = PositionSynchronizer(config=config)
+        symbol = Symbol(ticker="AAPL")
+
+        broker_pos = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+        )
+        local_pos = Position(
+            symbol=symbol, side=OrderSide.SELL,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+        )
+
+        result = sync.sync([broker_pos], [local_pos])
+        assert result.has_critical is True
+        assert result.reconciled >= 1
+
+    def test_sync_with_none_symbol_filtered(self):
+        sync = PositionSynchronizer()
+        aapl = Symbol(ticker="AAPL")
+
+        broker = [Position(
+            symbol=aapl, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+        )]
+        local = [
+            Position(
+                symbol=None, side=OrderSide.BUY,  # type: ignore
+                quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            ),
+            Position(
+                symbol=aapl, side=OrderSide.BUY,
+                quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            ),
+        ]
+
+        result = sync.sync(broker, local)
+        assert result.broker_positions_count == 1
+        assert result.local_positions_count == 2
+        assert result.matched == 1
+
+    def test_sync_exception_in_callback_handled(self):
+        sync = PositionSynchronizer()
+
+        def bad_diff_handler(diff):
+            raise RuntimeError("diff handler error")
+
+        sync.on_difference(bad_diff_handler)
+
+        aapl = Symbol(ticker="AAPL")
+        broker_pos = Position(
+            symbol=aapl, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+        )
+
+        result = sync.sync([broker_pos], [])
+        assert result.total_differences == 1
+        assert sync.total_syncs == 1
