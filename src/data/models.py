@@ -36,6 +36,7 @@ class Symbol:
     security_type: str = "EQUITY"  # EQUITY, FOREX, FUTURE, OPTION, CRYPTO, CFD
     exchange: str = ""
     currency: str = "USD"
+    sector: str = ""
     
     def __hash__(self) -> int:
         return hash((self.ticker, self.security_type, self.exchange))

@@ -181,7 +181,7 @@ class TestLatencyCalculator:
         """Test record decorator"""
         @calculator.record
         def test_function():
-            time.sleep(0.01)
+            time.sleep(0.02)
             return "result"
         
         result = test_function()
@@ -189,7 +189,7 @@ class TestLatencyCalculator:
         assert result == "result"
         stats = calculator.get_statistics()
         assert stats['count'] == 1
-        assert stats['mean'] >= 10.0  # At least 10ms
+        assert stats['mean'] >= 10.0  # Sleep of 20ms, allow timer-resolution margin
 
 
 class TestPerformanceMetrics:
@@ -295,10 +295,10 @@ class TestLatencyMonitor:
     def test_timer_operations(self, monitor):
         """Test timer operations"""
         monitor.start_timer("operation1")
-        time.sleep(0.01)
+        time.sleep(0.02)
         latency = monitor.stop_timer("operation1")
         
-        assert latency >= 10.0  # At least 10ms
+        assert latency >= 10.0  # Sleep of 20ms, allow timer-resolution margin
         
         stats = monitor.get_statistics("operation1")
         assert stats['count'] == 1
@@ -311,7 +311,7 @@ class TestLatencyMonitor:
     def test_time_operation_context(self, monitor):
         """Test time operation context manager"""
         with monitor.time_operation("test_op"):
-            time.sleep(0.01)
+            time.sleep(0.02)
         
         stats = monitor.get_statistics("test_op")
         assert stats['count'] == 1

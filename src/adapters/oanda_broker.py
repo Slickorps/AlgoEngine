@@ -382,23 +382,29 @@ class OandaBroker(ITransactionHandler):
     
     def process_order(self, order: Order) -> OrderEvent:
         """Process an order synchronously - not supported for live trading"""
-        raise NotImplementedError("Use submit_order for async order processing")
+        raise NotImplementedError("Use async submit_order for live order processing")
     
     def cancel_order(self, order_id: str) -> OrderEvent:
         """Cancel an order synchronously - not supported for live trading"""
-        raise NotImplementedError("Use async cancel_order method for live trading")
+        raise NotImplementedError("Use async cancel_order_by_id for live trading")
     
     def update_order(self, order: Order) -> OrderEvent:
         """Update an existing order synchronously - not supported for live trading"""
         raise NotImplementedError("Use async methods for live trading")
     
     def get_open_orders(self, symbol: Optional[Symbol] = None) -> List[Order]:
-        """Get open orders - sync version raises if not connected"""
-        return []
+        """Get open orders from cached state (populated by async refresh)"""
+        orders = [self._to_interface_order(o) for o in self._orders.values()]
+        if symbol is not None:
+            orders = [o for o in orders if o.symbol == symbol]
+        return orders
     
     def get_order_by_id(self, order_id: str) -> Optional[Order]:
-        """Get order by ID - sync version raises if not connected"""
-        return None
+        """Get order by ID from cached state"""
+        oanda_order = self._orders.get(order_id)
+        if oanda_order is None:
+            return None
+        return self._to_interface_order(oanda_order)
     
     async def connect(self) -> bool:
         """Connect to OANDA API"""
@@ -549,29 +555,7 @@ class OandaBroker(ITransactionHandler):
         
         try:
             await self._refresh_orders()
-            
-            orders = []
-            for oanda_order in self._orders.values():
-                symbol = self._convert_oanda_to_symbol(oanda_order.instrument)
-                order_type = self._convert_oanda_order_type(oanda_order.type)
-                status = self._convert_oanda_order_status(oanda_order.status)
-                side = 'BUY' if oanda_order.side == 'buy' else 'SELL'
-                
-                order = Order(
-                    id=oanda_order.id,
-                    symbol=symbol,
-                    order_type=order_type,
-                    side=side,
-                    quantity=oanda_order.units,
-                    price=oanda_order.price,
-                    stop_price=oanda_order.stop_loss,
-                    status=status,
-                    created_at=oanda_order.create_time,
-                    tags={},
-                )
-                orders.append(order)
-            
-            return orders
+            return [self._to_interface_order(o) for o in self._orders.values()]
             
         except Exception as e:
             logger.error(f"Failed to get orders: {e}")
@@ -643,6 +627,21 @@ class OandaBroker(ITransactionHandler):
             ticker = instrument
         
         return Symbol(ticker)
+    
+    def _to_interface_order(self, oanda_order: OandaOrder) -> Order:
+        """Convert an OandaOrder to an engine Order"""
+        return Order(
+            id=oanda_order.id,
+            symbol=self._convert_oanda_to_symbol(oanda_order.instrument),
+            order_type=self._convert_oanda_order_type(oanda_order.type),
+            side='BUY' if oanda_order.side == 'buy' else 'SELL',
+            quantity=oanda_order.units,
+            price=oanda_order.price,
+            stop_price=oanda_order.stop_loss,
+            status=self._convert_oanda_order_status(oanda_order.status),
+            created_at=oanda_order.create_time,
+            tags={},
+        )
     
     def _convert_oanda_order_type(self, oanda_type: str) -> OrderType:
         """Convert OANDA order type to our OrderType"""

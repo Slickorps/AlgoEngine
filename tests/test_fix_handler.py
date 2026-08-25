@@ -13,6 +13,7 @@ from src.protocols.fix_handler import (
     SessionStats,
     MsgType,
     SOH,
+    SOH_BYTE,
     FIX_TAG_NAME,
     FIX_NAME_TAG,
     create_fix_session,
@@ -347,6 +348,138 @@ class TestFIXSessionMessageProcessing:
         logout.set(58, "Bye")
         asyncio.run(session._handle_admin(logout))
         assert session.state == SessionState.LOGOUT_SENT
+
+
+class FakeWriter:
+    """Minimal asyncio.StreamWriter stand-in for session tests."""
+
+    def __init__(self):
+        self.data = b""
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self.data += data
+
+    async def drain(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        pass
+
+
+class TestFIXSessionTransport:
+    @pytest.fixture
+    def config(self):
+        return FIXSessionConfig(sender_comp_id="ALGO", target_comp_id="BROKER")
+
+    def test_send_raw_raises_without_writer(self, config):
+        session = FIXSession(config)
+        with pytest.raises(RuntimeError):
+            asyncio.run(session._send_raw(b"8=FIX.4.4\x01"))
+
+    def test_send_assigns_sequence_and_writes(self, config):
+        session = FIXSession(config)
+        writer = FakeWriter()
+        session._writer = writer
+        msg = FIXMessage()
+        msg.set(35, "D")
+
+        asyncio.run(session.send(msg))
+
+        assert msg[49] == "ALGO"
+        assert msg[56] == "BROKER"
+        assert msg[34] == "1"
+        assert session.seq_num_out == 2
+        assert len(writer.data) > 0
+        assert session.stats.messages_sent == 1
+
+    def test_send_logon_transitions_state(self, config):
+        session = FIXSession(config)
+        writer = FakeWriter()
+        session._writer = writer
+
+        asyncio.run(session._send_logon())
+
+        assert session.state == SessionState.LOGON_SENT
+        assert session.seq_num_out == 2
+        assert len(writer.data) > 0
+
+    def test_disconnect_without_writer(self, config):
+        session = FIXSession(config)
+        session._transition(SessionState.CONNECTING)
+
+        asyncio.run(session.disconnect("Test"))
+
+        assert session.state == SessionState.DISCONNECTED
+
+    def test_extract_body_length(self, config):
+        session = FIXSession(config)
+        raw = f"8=FIX.4.4{SOH}9=65{SOH}35=D".encode()
+        first_soh = raw.find(SOH_BYTE)
+        soh_idx = raw.find(SOH_BYTE, first_soh + 1)
+        assert session._extract_body_length(raw, soh_idx) == 65
+
+    def test_extract_body_length_missing(self, config):
+        session = FIXSession(config)
+        raw = b"8=FIX.4.4"
+        assert session._extract_body_length(raw, len(raw)) is None
+
+
+class TestFIXSessionDispatch:
+    @pytest.fixture
+    def config(self):
+        return FIXSessionConfig(sender_comp_id="ALGO", target_comp_id="BROKER")
+
+    def test_dispatch_calls_registered_handler(self, config):
+        session = FIXSession(config)
+        received = []
+
+        def handler(msg):
+            received.append(msg.msg_type)
+
+        session.on_message("D", handler)
+        msg = FIXMessage()
+        msg.set(35, "D")
+
+        asyncio.run(session._dispatch(msg))
+
+        assert received == ["D"]
+
+    def test_handle_admin_test_request_sends_heartbeat(self, config):
+        session = FIXSession(config)
+        writer = FakeWriter()
+        session._writer = writer
+        session._transition(SessionState.CONNECTING)
+        session._transition(SessionState.LOGON_SENT)
+        session._transition(SessionState.LOGGED_ON)
+
+        test_req = FIXMessage()
+        test_req.set(35, "1")
+        test_req.set(112, "test-1")
+
+        asyncio.run(session._handle_admin(test_req))
+
+        assert len(writer.data) > 0
+        assert session.seq_num_out == 2
+
+    def test_handle_admin_resend_request_no_error(self, config):
+        session = FIXSession(config)
+        resend = FIXMessage()
+        resend.set(35, "2")
+        resend.set(45, "1")
+
+        asyncio.run(session._handle_admin(resend))
+
+    def test_handle_admin_reject_no_error(self, config):
+        session = FIXSession(config)
+        reject = FIXMessage()
+        reject.set(35, "3")
+        reject.set(45, "1")
+
+        asyncio.run(session._handle_admin(reject))
 
 
 # ── FIXConnection tests ────────────────────────────────────────────

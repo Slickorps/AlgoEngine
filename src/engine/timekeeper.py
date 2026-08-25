@@ -47,6 +47,7 @@ class TimeKeeper:
         self._start_time: datetime = self._current_time
         self._schedules: Dict[str, Schedule] = {}
         self._running: bool = False
+        self._stop_event: asyncio.Event = asyncio.Event()
         self._time_changed_callbacks: List[Callable[[datetime], None]] = []
     
     @property
@@ -198,6 +199,7 @@ class TimeKeeper:
     
     async def run(self) -> None:
         """Run the time keeper loop"""
+        self._stop_event.clear()
         self._running = True
         logger.info("Time keeper started")
         
@@ -217,13 +219,18 @@ class TimeKeeper:
                     else:
                         self.unschedule(schedule_id)
             
-            await asyncio.sleep(1)
+            # Wait up to 1 second, waking immediately when stopped
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
         
         logger.info("Time keeper stopped")
     
     def stop(self) -> None:
         """Stop the time keeper"""
         self._running = False
+        self._stop_event.set()
     
     @property
     def is_backtest(self) -> bool:

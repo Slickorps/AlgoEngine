@@ -672,6 +672,69 @@ class TestOandaBroker:
         assert broker._convert_oanda_order_status("FILLED") == OrderStatus.FILLED
         assert broker._convert_oanda_order_status("CANCELLED") == OrderStatus.CANCELLED
         assert broker._convert_oanda_order_status("PENDING") == OrderStatus.PENDING
+
+    def _make_oanda_order(self, order_id, instrument="EUR_USD"):
+        return OandaOrder(
+            id=order_id,
+            instrument=instrument,
+            type="MARKET",
+            side="buy",
+            units=Decimal("1000"),
+            price=None,
+            stop_loss=None,
+            take_profit=None,
+            status="FILLED",
+            create_time=datetime.now(),
+            cancel_time=None,
+            fill_time=None,
+        )
+
+    def test_get_open_orders_from_cache(self, broker):
+        """Test sync get_open_orders returns cached orders"""
+        broker._orders = {"12345": self._make_oanda_order("12345")}
+
+        orders = broker.get_open_orders()
+
+        assert len(orders) == 1
+        assert orders[0].id == "12345"
+        assert orders[0].symbol.ticker == "EURUSD"
+        assert orders[0].order_type == OrderType.MARKET
+
+    def test_get_open_orders_empty_cache(self, broker):
+        """Test sync get_open_orders with empty cache"""
+        assert broker.get_open_orders() == []
+
+    def test_get_open_orders_filter_by_symbol(self, broker):
+        """Test sync get_open_orders filters by symbol"""
+        broker._orders = {
+            "1": self._make_oanda_order("1", "EUR_USD"),
+            "2": self._make_oanda_order("2", "GBP_USD"),
+        }
+
+        orders = broker.get_open_orders(symbol=Symbol("EURUSD"))
+
+        assert len(orders) == 1
+        assert orders[0].symbol.ticker == "EURUSD"
+
+    def test_get_order_by_id_found(self, broker):
+        """Test sync get_order_by_id returns cached order"""
+        broker._orders = {"12345": self._make_oanda_order("12345")}
+
+        order = broker.get_order_by_id("12345")
+
+        assert order is not None
+        assert order.id == "12345"
+
+    def test_get_order_by_id_not_found(self, broker):
+        """Test sync get_order_by_id returns None for unknown ID"""
+        assert broker.get_order_by_id("missing") is None
+
+    def test_process_order_raises_not_implemented(self, broker):
+        """Test sync process_order is async-only"""
+        order = Order(id="", symbol=Symbol("EURUSD"), order_type=OrderType.MARKET,
+                      quantity=Decimal("1000"), side="BUY")
+        with pytest.raises(NotImplementedError):
+            broker.process_order(order)
     
     @pytest.mark.asyncio
     async def test_get_market_price(self, broker):

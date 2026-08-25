@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from .portfolio import PortfolioSnapshot
+from ..trading.models import Trade
 from ..utils.logger import get_logger
 
 logger = get_logger("portfolio.metrics")
@@ -102,7 +103,8 @@ class PerformanceCalculator:
     def calculate_metrics(
         cls,
         snapshots: List[PortfolioSnapshot],
-        risk_free_rate: float = 0.0
+        risk_free_rate: float = 0.0,
+        trades: Optional[List[Trade]] = None
     ) -> Optional[PerformanceMetrics]:
         """Calculate all performance metrics from snapshots"""
         if len(snapshots) < 2:
@@ -143,10 +145,8 @@ class PerformanceCalculator:
         # Max drawdown
         max_dd, dd_duration = cls.calculate_max_drawdown(equity_curve)
         
-        # Trade metrics (placeholder - would need actual trade data)
-        win_rate = 0.0
-        profit_factor = 0.0
-        avg_trade_return = 0.0
+        # Trade metrics
+        win_rate, profit_factor, avg_trade_return = cls.calculate_trade_metrics(trades)
         
         # Calmar ratio
         if max_dd > 0:
@@ -166,6 +166,31 @@ class PerformanceCalculator:
             avg_trade_return=avg_trade_return,
             calmar_ratio=calmar
         )
+    
+    @staticmethod
+    def calculate_trade_metrics(
+        trades: Optional[List[Trade]] = None
+    ) -> Tuple[float, float, float]:
+        """Calculate win rate, profit factor, and average trade return"""
+        if not trades:
+            return 0.0, 0.0, 0.0
+        
+        total = len(trades)
+        winning = sum(1 for t in trades if t.net_pnl > 0)
+        
+        win_rate = (winning / total * 100) if total > 0 else 0.0
+        
+        gross_profit = sum(float(t.net_pnl) for t in trades if t.net_pnl > 0)
+        gross_loss = abs(sum(float(t.net_pnl) for t in trades if t.net_pnl < 0))
+        
+        if gross_loss == 0:
+            profit_factor = gross_profit if gross_profit > 0 else 0.0
+        else:
+            profit_factor = gross_profit / gross_loss
+        
+        avg_trade_return = sum(float(t.net_pnl) for t in trades) / total if total > 0 else 0.0
+        
+        return win_rate, profit_factor, avg_trade_return
     
     @staticmethod
     def calculate_var(

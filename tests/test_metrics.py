@@ -250,3 +250,92 @@ class TestEdgeCases:
         assert metrics is not None
         assert metrics.max_drawdown == 0.0
         assert metrics.calmar_ratio == 0.0
+
+
+class TestTradeMetrics:
+    """Tests for trade-based performance metrics"""
+
+    def _make_trade(self, net_pnl, trade_id="T1"):
+        from src.trading.models import Trade, OrderSide
+        from src.data.models import Symbol
+
+        pnl = Decimal(str(net_pnl))
+        return Trade(
+            trade_id=trade_id,
+            symbol=Symbol(ticker="AAPL"),
+            entry_time=datetime.now(),
+            exit_time=datetime.now(),
+            side=OrderSide.BUY,
+            quantity=Decimal("10"),
+            entry_price=Decimal("100"),
+            exit_price=Decimal("100"),
+            realized_pnl=pnl,
+        )
+
+    def test_calculate_trade_metrics_empty(self):
+        win_rate, profit_factor, avg = PerformanceCalculator.calculate_trade_metrics(None)
+        assert win_rate == 0.0
+        assert profit_factor == 0.0
+        assert avg == 0.0
+
+    def test_calculate_trade_metrics_empty_list(self):
+        win_rate, profit_factor, avg = PerformanceCalculator.calculate_trade_metrics([])
+        assert win_rate == 0.0
+        assert profit_factor == 0.0
+        assert avg == 0.0
+
+    def test_calculate_trade_metrics_win_and_loss(self):
+        trades = [self._make_trade(100, "T1"), self._make_trade(-50, "T2")]
+
+        win_rate, profit_factor, avg = PerformanceCalculator.calculate_trade_metrics(trades)
+
+        assert win_rate == 50.0
+        assert profit_factor == pytest.approx(2.0)
+        assert avg == pytest.approx(25.0)
+
+    def test_calculate_trade_metrics_all_wins_no_loss(self):
+        trades = [self._make_trade(100, "T1"), self._make_trade(50, "T2")]
+
+        win_rate, profit_factor, avg = PerformanceCalculator.calculate_trade_metrics(trades)
+
+        assert win_rate == 100.0
+        assert profit_factor == pytest.approx(150.0)
+        assert avg == pytest.approx(75.0)
+
+    def test_calculate_trade_metrics_all_losses(self):
+        trades = [self._make_trade(-100, "T1"), self._make_trade(-50, "T2")]
+
+        win_rate, profit_factor, avg = PerformanceCalculator.calculate_trade_metrics(trades)
+
+        assert win_rate == 0.0
+        assert profit_factor == 0.0
+        assert avg == pytest.approx(-75.0)
+
+    def test_calculate_metrics_with_trades(self):
+        now = datetime.now()
+        snapshots = [
+            PortfolioSnapshot(
+                timestamp=now,
+                cash=Decimal("100000"),
+                positions_value=Decimal("0"),
+                total_value=Decimal("100000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+            PortfolioSnapshot(
+                timestamp=now + timedelta(days=1),
+                cash=Decimal("101000"),
+                positions_value=Decimal("0"),
+                total_value=Decimal("101000"),
+                unrealized_pnl=Decimal("0"),
+                realized_pnl=Decimal("0"),
+            ),
+        ]
+        trades = [self._make_trade(100, "T1"), self._make_trade(-50, "T2")]
+
+        metrics = PerformanceCalculator.calculate_metrics(snapshots, trades=trades)
+
+        assert metrics is not None
+        assert metrics.win_rate == 50.0
+        assert metrics.profit_factor == pytest.approx(2.0)
+        assert metrics.avg_trade_return == pytest.approx(25.0)

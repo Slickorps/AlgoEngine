@@ -14,7 +14,6 @@ An open-source algorithmic trading platform supporting multi-asset CFD trading i
   - **Rust** — High-performance market data processing (OHLCV aggregation, statistical analysis)
   - **Go** — Real-time system monitoring and latency tracking
   - **TypeScript** — Web-based trading dashboard
-  - **C++** — Technical indicator library (optional)
 
 ## Quick Start
 

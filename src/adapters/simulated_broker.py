@@ -7,7 +7,7 @@ from typing import Optional, Dict
 import random
 
 from ..trading.execution_engine import BrokerAdapter
-from ..trading.models import Order, OrderStatus, Fill, OrderType
+from ..trading.models import Order, OrderStatus, OrderSide, Fill, OrderType
 from ..data.models import Tick
 from ..utils.logger import get_logger
 
@@ -29,6 +29,7 @@ class SimulatedBroker(BrokerAdapter):
         self._partial_fill_probability = partial_fill_probability
         
         self._orders: Dict[str, Order] = {}
+        self._latest_ticks: Dict = {}
         self._pending_fills: asyncio.Queue = asyncio.Queue()
         self._fill_task: Optional[asyncio.Task] = None
     
@@ -142,18 +143,28 @@ class SimulatedBroker(BrokerAdapter):
         )
     
     async def _get_fill_price(self, order: Order) -> Optional[Decimal]:
-        """Get simulated fill price"""
-        # In a real implementation, this would use current market data
-        # For simulation, we use a default price or the order's limit price
-        
+        """Get simulated fill price from the latest injected market data"""
         if order.order_type == OrderType.LIMIT and order.limit_price:
             return order.limit_price
         
-        # Return a simulated price (would be from market data)
-        return Decimal("100.00")  # Placeholder
+        tick = self._latest_ticks.get(order.symbol)
+        if tick is None:
+            return None
+        
+        # Buyers cross the spread at the ask, sellers at the bid
+        if order.side == OrderSide.BUY and tick.ask_price > 0:
+            return tick.ask_price
+        if order.side == OrderSide.SELL and tick.bid_price > 0:
+            return tick.bid_price
+        
+        if tick.last_price is not None and tick.last_price > 0:
+            return tick.last_price
+        
+        if tick.mid_price > 0:
+            return tick.mid_price
+        
+        return None
     
     def inject_market_data(self, tick: Tick) -> None:
         """Inject market data for fill simulation"""
-        # This would be called by the data feed to provide current prices
-        # for realistic fill simulation
-        pass
+        self._latest_ticks[tick.symbol] = tick

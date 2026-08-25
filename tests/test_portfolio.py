@@ -338,3 +338,36 @@ class TestPortfolioEdgeCases:
     def test_total_return_percent_zero_initial(self):
         portfolio = Portfolio(initial_cash=Decimal("0"))
         assert portfolio.total_return_percent == 0.0
+
+    def test_get_sector_exposure(self, portfolio):
+        aapl = Symbol(ticker="AAPL", sector="Technology")
+        tsla = Symbol(ticker="TSLA", sector="Technology")
+        eurusd = Symbol(ticker="EURUSD", security_type="FOREX")
+
+        portfolio.update_position(Position(
+            symbol=aapl, side=OrderSide.BUY,
+            quantity=Decimal("100"), avg_entry_price=Decimal("150.00"),
+            current_price=Decimal("150.00"),
+        ))
+        portfolio.update_position(Position(
+            symbol=tsla, side=OrderSide.BUY,
+            quantity=Decimal("50"), avg_entry_price=Decimal("200.00"),
+            current_price=Decimal("200.00"),
+        ))
+        portfolio.update_position(Position(
+            symbol=eurusd, side=OrderSide.BUY,
+            quantity=Decimal("1000"), avg_entry_price=Decimal("1.00"),
+            current_price=Decimal("1.00"),
+        ))
+        portfolio.update_cash(Decimal("-26000.00"))
+
+        exposure = portfolio.get_sector_exposure()
+        total = portfolio.total_value
+
+        # Technology = 15000 + 10000 = 25000; FOREX = 1000
+        assert exposure["Technology"] == Decimal("25000.00") / total
+        assert exposure["FOREX"] == Decimal("1000.00") / total
+
+    def test_get_sector_exposure_zero_total(self):
+        portfolio = Portfolio(initial_cash=Decimal("0"))
+        assert portfolio.get_sector_exposure() == {}

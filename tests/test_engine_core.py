@@ -693,3 +693,165 @@ class TestEngineWithMocks:
         )
         engine.submit_order(order)
         assert engine.state == EngineState.IDLE
+
+
+class SpyTransactionHandler(MockTransactionHandler):
+    """Transaction handler that records processed and cancelled orders"""
+
+    def __init__(self):
+        super().__init__()
+        self.processed: List[Order] = []
+        self.cancelled: List[str] = []
+
+    def process_order(self, order: Order) -> OrderEvent:
+        self.processed.append(order)
+        return super().process_order(order)
+
+    def cancel_order(self, order_id: str) -> OrderEvent:
+        self.cancelled.append(order_id)
+        return super().cancel_order(order_id)
+
+
+class RejectingRiskManager(MockRiskManager):
+    """Risk manager that rejects all orders"""
+
+    def is_within_limits(self, portfolio: IPortfolio) -> bool:
+        return False
+
+
+class TestEngineEventHandlersAndOrderFlow:
+    """Test event handlers and order submission/cancellation paths"""
+
+    def _make_event(self, event_type, data):
+        return Event(event_type=event_type, timestamp=datetime.now(), data=data)
+
+    def test_on_tick_dispatches_to_algorithm(self):
+        engine = Engine()
+        algo = MockAlgorithm()
+        engine._algorithm = algo
+        tick = Tick(
+            symbol=Symbol("AAPL"), timestamp=datetime.now(),
+            bid_price=Decimal("150.00"), ask_price=Decimal("150.10"),
+            bid_size=Decimal("100"), ask_size=Decimal("100"),
+        )
+        engine._on_tick(self._make_event(EventType.TICK, tick))
+        assert len(algo.data_received) == 1
+
+    def test_on_bar_dispatches_to_algorithm(self):
+        engine = Engine()
+        algo = MockAlgorithm()
+        engine._algorithm = algo
+        bar = Bar(
+            symbol=Symbol("AAPL"), timestamp=datetime.now(),
+            open=Decimal("150"), high=Decimal("155"), low=Decimal("149"),
+            close=Decimal("152"), volume=Decimal("1000"),
+        )
+        engine._on_bar(self._make_event(EventType.BAR, bar))
+        assert len(algo.data_received) == 1
+
+    def test_on_tick_skipped_during_warmup(self):
+        engine = Engine()
+        algo = MockAlgorithm()
+        engine._algorithm = algo
+        engine._is_warming_up = True
+        tick = Tick(
+            symbol=Symbol("AAPL"), timestamp=datetime.now(),
+            bid_price=Decimal("150.00"), ask_price=Decimal("150.10"),
+            bid_size=Decimal("100"), ask_size=Decimal("100"),
+        )
+        engine._on_tick(self._make_event(EventType.TICK, tick))
+        assert len(algo.data_received) == 0
+
+    def test_on_order_filled_dispatches_to_algorithm_and_portfolio(self):
+        portfolio = MockPortfolio()
+        engine = Engine(portfolio=portfolio)
+        algo = MockAlgorithm()
+        engine._algorithm = algo
+        order_event = OrderEvent(
+            order_id="o1", symbol=Symbol("AAPL"), status="FILLED",
+            timestamp=datetime.now(),
+        )
+        engine._on_order_filled(self._make_event(EventType.ORDER_FILLED, order_event))
+        assert len(algo.order_events) == 1
+        assert len(portfolio.fills) == 1
+
+    def test_submit_order_running_with_transaction_handler(self):
+        txn = SpyTransactionHandler()
+        engine = Engine(transaction_handler=txn, risk_manager=MockRiskManager())
+        engine._state = EngineState.RUNNING
+        order = Order(
+            id="o1", symbol=Symbol("AAPL"), order_type=OrderType.MARKET,
+            side="BUY", quantity=Decimal("10"),
+        )
+        engine.submit_order(order)
+        assert len(txn.processed) == 1
+
+    def test_submit_order_rejected_by_risk_manager(self):
+        txn = SpyTransactionHandler()
+        engine = Engine(
+            transaction_handler=txn,
+            risk_manager=RejectingRiskManager(),
+            portfolio=MockPortfolio(),
+        )
+        engine._state = EngineState.RUNNING
+        order = Order(
+            id="o1", symbol=Symbol("AAPL"), order_type=OrderType.MARKET,
+            side="BUY", quantity=Decimal("10"),
+        )
+        engine.submit_order(order)
+        assert len(txn.processed) == 0
+
+    def test_cancel_order_with_transaction_handler(self):
+        txn = SpyTransactionHandler()
+        engine = Engine(transaction_handler=txn)
+        engine.cancel_order("o1")
+        assert txn.cancelled == ["o1"]
+
+    def test_cancel_order_without_transaction_handler(self):
+        engine = Engine()
+        engine.cancel_order("o1")  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_warmup_backtest_mode(self):
+        engine = Engine(
+            algorithm_class=MockAlgorithm,
+            is_backtest=True,
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 6, 30),
+        )
+        await engine.initialize()
+        await engine.warmup(timedelta(days=10))
+        assert engine.algorithm.warmup_finished is True
+        assert engine.state == EngineState.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_warmup_skipped_in_live_mode(self):
+        engine = Engine(algorithm_class=MockAlgorithm, is_backtest=False)
+        await engine.initialize()
+        await engine.warmup(timedelta(days=10))
+        assert engine.algorithm.warmup_finished is False
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_live(self):
+        data_feed = MockDataFeed()
+        engine = Engine(data_feed=data_feed, algorithm_class=MockAlgorithm)
+        await engine.start()
+        assert engine.state == EngineState.RUNNING
+        assert engine.is_running is True
+        await engine.stop()
+        assert engine.state == EngineState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_start_backtest_runs_warmup(self):
+        engine = Engine(
+            algorithm_class=MockAlgorithm,
+            is_backtest=True,
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 6, 30),
+        )
+        engine.set_warmup_period(timedelta(days=5))
+        await engine.start()
+        assert engine.state == EngineState.RUNNING
+        assert engine.algorithm.warmup_finished is True
+        await engine.stop()
+        assert engine.state == EngineState.STOPPED

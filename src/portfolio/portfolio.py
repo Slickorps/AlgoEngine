@@ -163,9 +163,23 @@ class Portfolio:
         }
     
     def get_sector_exposure(self) -> Dict[str, Decimal]:
-        """Get exposure by sector (requires sector data)"""
-        # Placeholder - would need sector info per symbol
-        return {}
+        """Get exposure by sector as a fraction of total value"""
+        total = self.total_value
+        if total == 0:
+            return {}
+        
+        sector_values: Dict[str, Decimal] = {}
+        for symbol, position in self._positions.items():
+            if position.market_value <= 0:
+                continue
+            sector = symbol.sector or symbol.security_type
+            sector_values[sector] = sector_values.get(sector, Decimal("0")) + position.market_value
+        
+        return {
+            sector: value / total
+            for sector, value in sector_values.items()
+            if value > 0
+        }
     
     def get_summary(self) -> Dict:
         """Get portfolio summary"""

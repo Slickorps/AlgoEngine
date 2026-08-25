@@ -34,7 +34,8 @@ ENV/
 *~
 
 # Logs
-logs/
+logs/*
+!logs/.gitkeep
 *.log
 
 # Data - exclude runtime data but keep source
@@ -56,8 +57,14 @@ data/*.sqlite
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
+coverage.json
 htmlcov/
 .tox/
+
+# Linter and type checker caches
+.ruff_cache/
+.mypy_cache/
 
 # OS
 .DS_Store

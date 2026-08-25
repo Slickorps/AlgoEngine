@@ -2,13 +2,10 @@
 
 import pytest
 
-# Skip all tests if pyarrow not available
-pytest.importorskip("pyarrow")
-
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from src.data.models import Symbol, Bar, Tick, Resolution
+from src.data.models import Symbol, Bar, Tick, Resolution, DataType
 from src.data.storage import DataStorage
 
 
@@ -104,7 +101,7 @@ class TestDataStorage:
         symbol, bars = sample_bars
         temp_storage.save_bars(symbol, bars, Resolution.DAILY)
         
-        metadata = temp_storage.get_data_availability(symbol, Resolution.DAILY)
+        metadata = temp_storage.get_data_availability(symbol, DataType.BAR, Resolution.DAILY)
         
         assert metadata is not None
         assert metadata['record_count'] == len(bars)
@@ -182,3 +179,81 @@ class TestDataStorage:
         assert path.parent == temp_storage._tick_dir
         assert "AAPL" in str(path)
         assert "20230615" in str(path)
+
+    def test_save_bars_empty(self, temp_storage):
+        """Test save_bars with empty list is a no-op"""
+        symbol = Symbol(ticker="AAPL")
+        temp_storage.save_bars(symbol, [], Resolution.DAILY)
+        assert temp_storage.get_data_availability(symbol, DataType.BAR, Resolution.DAILY) is None
+
+    def test_save_and_load_ticks(self, temp_storage, sample_ticks):
+        """Test saving and loading tick data"""
+        symbol, ticks = sample_ticks
+        temp_storage.save_ticks(symbol, ticks, datetime(2023, 1, 1))
+
+        loaded = temp_storage.load_ticks(
+            symbol,
+            datetime(2023, 1, 1, 0, 0, 0),
+            datetime(2023, 1, 1, 23, 59, 59),
+        )
+
+        assert len(loaded) == len(ticks)
+        assert loaded[0].bid_price == ticks[0].bid_price
+
+    def test_save_ticks_empty(self, temp_storage):
+        """Test save_ticks with empty list is a no-op"""
+        symbol = Symbol(ticker="AAPL")
+        temp_storage.save_ticks(symbol, [], datetime(2023, 1, 1))
+        # No exception raised; nothing to assert beyond that
+
+    def test_load_ticks_no_data(self, temp_storage):
+        """Test load_ticks returns empty when no files exist"""
+        symbol = Symbol(ticker="NONE")
+        loaded = temp_storage.load_ticks(
+            symbol,
+            datetime(2023, 1, 1, 0, 0, 0),
+            datetime(2023, 1, 2, 0, 0, 0),
+        )
+        assert loaded == []
+
+    def test_load_ticks_date_range(self, temp_storage, sample_ticks):
+        """Test load_ticks filters by start/end time"""
+        symbol, ticks = sample_ticks
+        temp_storage.save_ticks(symbol, ticks, datetime(2023, 1, 1))
+
+        loaded = temp_storage.load_ticks(
+            symbol,
+            datetime(2023, 1, 1, 9, 30, 0),
+            datetime(2023, 1, 1, 9, 30, 30),
+        )
+
+        assert 0 < len(loaded) < len(ticks)
+
+    def test_get_data_availability_none(self, temp_storage):
+        """Test get_data_availability returns None for unknown symbol"""
+        symbol = Symbol(ticker="UNKNOWN")
+        assert temp_storage.get_data_availability(symbol, DataType.BAR, Resolution.DAILY) is None
+
+    def test_list_available_symbols_filtered(self, temp_storage, sample_bars):
+        """Test list_available_symbols with data type filter"""
+        symbol, bars = sample_bars
+        temp_storage.save_bars(symbol, bars, Resolution.DAILY)
+
+        symbols = temp_storage.list_available_symbols(data_type=DataType.BAR)
+        assert len(symbols) == 1
+        assert "AAPL" in symbols[0]
+
+        empty = temp_storage.list_available_symbols(data_type=DataType.TICK)
+        assert empty == []
+
+    def test_load_bars_empty_range(self, temp_storage, sample_bars):
+        """Test load_bars returns empty when range excludes all data"""
+        symbol, bars = sample_bars
+        temp_storage.save_bars(symbol, bars, Resolution.DAILY)
+
+        loaded = temp_storage.load_bars(
+            symbol, Resolution.DAILY,
+            start=datetime(2030, 1, 1),
+            end=datetime(2030, 1, 2),
+        )
+        assert loaded == []
