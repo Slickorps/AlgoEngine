@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Type, Any
 from ..algorithms.strategy import Strategy, StrategyConfig
 from ..algorithms.strategy_manager import StrategyManager
 from ..portfolio.portfolio import Portfolio
-from ..engine.events import EventBus, EventType
+from ..engine.events import EventBus, Event, EventType
 from ..engine.timekeeper import TimeKeeper, TimeMode
 from ..data.models import Symbol, Bar, Resolution
 from ..adapters.simulated_broker import SimulatedBroker
@@ -190,7 +190,12 @@ class BacktestEngine:
                 self._current_index[symbol] = index + 1
                 
                 # Emit bar event
-                self._event_bus.emit(EventType.BAR, bar)
+                self._event_bus.emit(Event(
+                    event_type=EventType.BAR,
+                    timestamp=timestamp,
+                    data=bar,
+                    symbol=str(symbol)
+                ))
                 
                 # Update position prices
                 position = self._position_manager.get_position(symbol)
@@ -200,7 +205,7 @@ class BacktestEngine:
     def _generate_results(self) -> BacktestResults:
         """Generate backtest results"""
         snapshots = self._portfolio.get_snapshots()
-        trades = self._position_manager.get_all_trades()
+        trades = self._position_manager.get_trades()
         
         return BacktestResults(
             start_date=self._config.start_date,

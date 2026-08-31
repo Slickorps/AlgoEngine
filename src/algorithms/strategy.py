@@ -10,7 +10,7 @@ import itertools
 from ..data.models import Symbol, Tick, Bar
 from ..trading.models import Order, OrderSide, OrderType, Fill
 from ..portfolio.portfolio import Portfolio
-from ..engine.events import EventBus, EventType
+from ..engine.events import EventBus, Event, EventType
 from ..utils.logger import get_logger
 
 logger = get_logger("algorithms.strategy")
@@ -133,11 +133,19 @@ class Strategy(ABC):
         for symbol in self._config.symbols:
             self._event_bus.subscribe(
                 EventType.BAR,
-                lambda event, s=symbol: self._on_bar(event) if event.symbol == s else None
+                lambda event, s=symbol: (
+                    self._on_bar(event.data)
+                    if event.data is not None and event.data.symbol == s
+                    else None
+                )
             )
             self._event_bus.subscribe(
                 EventType.TICK,
-                lambda event, s=symbol: self._on_tick(event) if event.symbol == s else None
+                lambda event, s=symbol: (
+                    self._on_tick(event.data)
+                    if event.data is not None and event.data.symbol == s
+                    else None
+                )
             )
     
     def _unsubscribe_from_events(self) -> None:
@@ -233,7 +241,12 @@ class Strategy(ABC):
         )
         
         # Emit order event
-        self._event_bus.emit(EventType.ORDER, order)
+        self._event_bus.emit(Event(
+            event_type=EventType.ORDER,
+            timestamp=datetime.now(),
+            data=order,
+            symbol=str(order.symbol)
+        ))
         
         logger.info(
             f"Strategy {self._strategy_id} submitted {side.name} order: "

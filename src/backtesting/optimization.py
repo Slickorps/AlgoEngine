@@ -181,7 +181,9 @@ class ParameterOptimizer:
         sensitivity = {}
         
         for result in self._results:
-            param_value = result.parameters.get(parameter)
+            if parameter not in result.parameters:
+                continue
+            param_value = result.parameters[parameter]
             if param_value not in sensitivity:
                 sensitivity[param_value] = {
                     "scores": [],

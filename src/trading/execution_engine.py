@@ -8,7 +8,7 @@ from .models import Order, OrderType, OrderStatus, Fill, OrderSide, CommissionMo
 from .order_manager import OrderManager
 from .position_manager import PositionManager
 from ..data.models import Symbol, Tick
-from ..engine.events import EventType, get_event_bus
+from ..engine.events import Event, EventType, get_event_bus
 from ..utils.logger import get_logger
 
 logger = get_logger("trading.execution")
@@ -116,6 +116,24 @@ class ExecutionEngine:
     def cancel_all_orders(self, symbol: Optional[Symbol] = None) -> int:
         """Cancel all orders"""
         return self._order_manager.cancel_all_orders(symbol)
+
+    async def start(self) -> None:
+        """Start the execution engine (connect broker if available)"""
+        if self._broker:
+            try:
+                if not self._broker.is_connected():
+                    await self._broker.connect()
+            except Exception as e:
+                logger.error(f"Error starting execution engine: {e}")
+
+    async def stop(self) -> None:
+        """Stop the execution engine (disconnect broker if available)"""
+        if self._broker:
+            try:
+                if self._broker.is_connected():
+                    await self._broker.disconnect()
+            except Exception as e:
+                logger.error(f"Error stopping execution engine: {e}")
     
     def process_tick(self, tick: Tick) -> None:
         """Process market tick for pending orders"""
@@ -234,12 +252,12 @@ class ExecutionEngine:
         trade = self._position_manager.process_fill(fill)
         
         # Emit event
-        self._event_bus.emit(
-            type=EventType.FILL,
+        self._event_bus.emit(Event(
+            event_type=EventType.FILL,
             timestamp=fill.fill_time,
             data={'fill': fill, 'trade': trade},
             symbol=str(fill.symbol)
-        )
+        ))
         
         logger.info(
             f"Fill processed: {fill.fill_id} {fill.symbol.ticker} "

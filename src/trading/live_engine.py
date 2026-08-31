@@ -241,6 +241,9 @@ class LiveEngine:
         self._mode = mode
         self._event_bus = get_event_bus()
 
+        # Process fills coming through the execution engine
+        self._execution_engine.order_manager.on_fill(self.handle_fill)
+
         # Core components
         self._risk_manager: Optional[RiskManager] = None
         self._trade_logger = LiveTradeLogger()
@@ -730,7 +733,7 @@ class LiveEngine:
         except Exception as e:
             self._trade_logger.log_error("market_data", e)
 
-    def on_fill(self, fill: Fill) -> None:
+    def handle_fill(self, fill: Fill) -> None:
         """Handle order fill from execution engine"""
         try:
             order = self._pending_orders.pop(fill.order_id, None)

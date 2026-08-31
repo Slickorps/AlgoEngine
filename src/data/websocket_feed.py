@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from .feed import StreamingDataFeed
 from .models import Symbol
-from ..engine.events import EventBus, EventType
+from ..engine.events import EventBus, Event, EventType
 from ..utils.logger import get_logger
 
 logger = get_logger("data.websocket")
@@ -425,11 +425,15 @@ class WebSocketFeedManager:
         """Handle incoming WebSocket message"""
         try:
             # Emit to event bus
-            self._event_bus.emit(EventType.WEBSOCKET_MESSAGE, {
-                'connection_id': connection_id,
-                'data': data,
-                'timestamp': datetime.now()
-            })
+            self._event_bus.emit(Event(
+                event_type=EventType.WEBSOCKET_MESSAGE,
+                timestamp=datetime.now(),
+                data={
+                    'connection_id': connection_id,
+                    'data': data,
+                    'timestamp': datetime.now()
+                }
+            ))
             
             # Symbol-specific handling can be implemented in subclasses
             self._process_symbol_data(connection_id, data)
@@ -442,11 +446,15 @@ class WebSocketFeedManager:
         logger.error(f"WebSocket error on connection {connection_id}: {error}")
         
         # Emit error event
-        self._event_bus.emit(EventType.WEBSOCKET_ERROR, {
-            'connection_id': connection_id,
-            'error': str(error),
-            'timestamp': datetime.now()
-        })
+        self._event_bus.emit(Event(
+            event_type=EventType.WEBSOCKET_ERROR,
+            timestamp=datetime.now(),
+            data={
+                'connection_id': connection_id,
+                'error': str(error),
+                'timestamp': datetime.now()
+            }
+        ))
     
     def _process_symbol_data(self, connection_id: str, data: dict) -> None:
         """Process symbol-specific data - override in subclasses"""
