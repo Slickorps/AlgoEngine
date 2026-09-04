@@ -26,6 +26,7 @@ class AlphaVantageAdapter(DataFeed):
         config = get_config()
         self._api_key = api_key or config.data.providers.get('alpha_vantage', {}).get('api_key', '')
         self._session: Optional[aiohttp.ClientSession] = None
+        self._connected: bool = False
         self._rate_limit_per_minute = 5  # Free tier: 5 calls per minute
         self._call_times: List[datetime] = []
         
@@ -168,13 +169,14 @@ class AlphaVantageAdapter(DataFeed):
         
         records = []
         for timestamp, values in data[time_series_key].items():
+            volume_key = '6. volume' if adjusted else '5. volume'
             record = {
                 'timestamp': timestamp,
                 'open': float(values['1. open']),
                 'high': float(values['2. high']),
                 'low': float(values['3. low']),
                 'close': float(values['4. close']),
-                'volume': int(values['6. volume'])
+                'volume': int(values[volume_key])
             }
             if adjusted:
                 record['adjusted_close'] = float(values['5. adjusted close'])

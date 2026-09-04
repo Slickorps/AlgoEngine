@@ -502,8 +502,7 @@ class TestCircuitBreaker:
 
         async def ok() -> str:
             return "ok"
-        import asyncio as _asyncio
-        _asyncio.get_event_loop().run_until_complete(cb.execute(ok))
+        asyncio.run(cb.execute(ok))
 
         assert cb.stats.state == CircuitBreakerState.CLOSED
         assert len(called) == 1
