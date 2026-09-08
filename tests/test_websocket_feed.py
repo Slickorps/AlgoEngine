@@ -11,6 +11,7 @@ from src.data.websocket_feed import (
     WebSocketFeedManager, WebSocketDataFeed
 )
 from src.data.models import Symbol
+from src.engine.events import EventType
 
 
 class TestWebSocketConfig:
@@ -467,6 +468,207 @@ class TestWebSocketIntegration:
         
         assert not success
         assert "invalid-conn" not in manager._connections
+
+
+class TestWebSocketConnectionInternal:
+    """Tests for WebSocket connection internals and error branches"""
+
+    @pytest.fixture
+    def config(self):
+        return WebSocketConfig("wss://test.example.com/ws")
+
+    @pytest.fixture
+    def connection(self, config):
+        return WebSocketConnection(config, "internal-conn")
+
+    async def test_connect_when_already_connected(self, connection):
+        connection._state = WebSocketState.CONNECTED
+        assert await connection.connect() is True
+
+    async def test_disconnect_when_already_disconnected(self, connection):
+        await connection.disconnect()
+        assert connection.state == WebSocketState.DISCONNECTED
+
+    async def test_message_loop_parses_and_dispatches(self, connection):
+        received = []
+        connection.add_message_handler(lambda d: received.append(d))
+        connection.add_message_handler(lambda d: 1 / 0)  # handler error swallowed
+
+        async def gen():
+            yield '{"type": "tick", "symbol": "AAPL"}'
+            yield "not-valid-json{"
+
+        connection._websocket = gen()
+        await connection._message_loop()
+
+        assert received == [{"type": "tick", "symbol": "AAPL"}]
+
+    async def test_message_loop_connection_closed(self, connection):
+        connection._websocket = AsyncMock()
+
+        class ClosedIter:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise StopAsyncIteration
+
+        connection._websocket.__aiter__ = lambda: ClosedIter()
+        await connection._message_loop()
+
+    async def test_send_message_failure_calls_error_handler(self, connection):
+        connection._state = WebSocketState.CONNECTED
+        ws = AsyncMock()
+        ws.send.side_effect = ConnectionError("socket gone")
+        connection._websocket = ws
+
+        with patch.object(connection, "_handle_error", new=AsyncMock()) as mock_err:
+            assert await connection.send_message({"x": 1}) is False
+        mock_err.assert_awaited_once()
+
+    async def test_ping_not_connected(self, connection):
+        assert await connection.ping() is False
+
+    async def test_ping_failure(self, connection):
+        connection._state = WebSocketState.CONNECTED
+        ws = AsyncMock()
+        ws.ping.side_effect = ConnectionError("down")
+        connection._websocket = ws
+
+        with patch.object(connection, "_handle_error", new=AsyncMock()) as mock_err:
+            assert await connection.ping() is False
+        mock_err.assert_awaited_once()
+
+    async def test_handle_connection_loss_reconnects(self, connection):
+        connection._state = WebSocketState.CONNECTED
+        connection._reconnect_delay = 0
+        connection._websocket = AsyncMock()
+
+        with patch.object(connection, "connect", new=AsyncMock(return_value=True)) as mock_connect:
+            await connection._handle_connection_loss()
+
+        assert mock_connect.await_count == 1
+        assert connection._reconnect_attempts == 1
+
+    async def test_handle_connection_loss_max_attempts(self, connection):
+        connection._state = WebSocketState.CONNECTED
+        connection._reconnect_attempts = connection._max_reconnect_attempts
+
+        await connection._handle_connection_loss()
+
+        assert connection.state == WebSocketState.ERROR
+
+    async def test_handle_error_triggers_reconnect_on_connection_error(self, connection):
+        with patch.object(connection, "_handle_connection_loss", new=AsyncMock()) as mock_loss:
+            await connection._handle_error(ConnectionError("lost"))
+        mock_loss.assert_awaited_once()
+
+    async def test_handle_error_no_reconnect_for_other_errors(self, connection):
+        with patch.object(connection, "_handle_connection_loss", new=AsyncMock()) as mock_loss:
+            await connection._handle_error(ValueError("bad data"))
+        mock_loss.assert_not_awaited()
+
+    async def test_handle_error_handler_exception(self, connection):
+        def bad_handler(error):
+            raise ValueError("nested failure")
+
+        connection.add_error_handler(bad_handler)
+        with patch.object(connection, "_handle_connection_loss", new=AsyncMock()):
+            await connection._handle_error(ValueError("boom"))
+
+
+class TestWebSocketFeedManagerEdgeCases:
+    """Tests for WebSocket feed manager edge cases"""
+
+    @pytest.fixture
+    def manager(self):
+        return WebSocketFeedManager()
+
+    @pytest.fixture
+    def config(self):
+        return WebSocketConfig("wss://test.example.com/ws")
+
+    async def test_remove_connection_unknown(self, manager):
+        await manager.remove_connection("missing")
+
+    async def test_remove_connection_cleans_subscriptions(self, manager, config):
+        symbol = Symbol("AAPL")
+        mock_websocket = AsyncMock()
+
+        async def mock_connect(*args, **kwargs):
+            return mock_websocket
+
+        with patch("websockets.connect", side_effect=mock_connect):
+            await manager.add_connection("conn1", config)
+            await manager.add_connection("conn2", config)
+            await manager.subscribe_symbol(symbol, "conn1")
+            await manager.subscribe_symbol(symbol, "conn2")
+
+            await manager.remove_connection("conn1")
+
+            # conn2 still subscribed, symbol retained
+            assert "conn1" not in manager._connections
+            assert symbol in manager._subscriptions
+
+            await manager.remove_connection("conn2")
+            assert symbol not in manager._subscriptions
+
+    async def test_subscribe_symbol_unknown_connection(self, manager):
+        assert await manager.subscribe_symbol(Symbol("AAPL"), "missing") is False
+
+    async def test_unsubscribe_symbol_not_subscribed(self, manager):
+        await manager.unsubscribe_symbol(Symbol("AAPL"))
+        await manager.unsubscribe_symbol(Symbol("AAPL"), "conn1")
+
+    async def test_unsubscribe_symbol_all_connections(self, manager):
+        symbol = Symbol("AAPL")
+        manager._subscriptions[symbol] = {"conn1", "conn2"}
+        await manager.unsubscribe_symbol(symbol)
+        assert symbol not in manager._subscriptions
+
+    async def test_send_to_connection_unknown(self, manager):
+        assert await manager.send_to_connection("missing", {}) is False
+
+    async def test_broadcast_to_symbol_no_subscribers(self, manager):
+        assert await manager.broadcast_to_symbol(Symbol("AAPL"), {}) == 0
+
+    async def test_handle_message_emits_event(self):
+        manager = WebSocketFeedManager()
+        received = []
+        manager._event_bus.subscribe(EventType.WEBSOCKET_MESSAGE, lambda e: received.append(e))
+
+        await manager._handle_message("conn1", {"type": "price"})
+
+        assert len(received) == 1
+        assert received[0].data["connection_id"] == "conn1"
+
+    async def test_handle_error_emits_event(self):
+        manager = WebSocketFeedManager()
+        received = []
+        manager._event_bus.subscribe(EventType.WEBSOCKET_ERROR, lambda e: received.append(e))
+
+        await manager._handle_error("conn1", ValueError("boom"))
+
+        assert len(received) == 1
+        assert "boom" in received[0].data["error"]
+
+
+class TestWebSocketDataFeedInternal:
+    """Tests for WebSocket data feed internals"""
+
+    @pytest.fixture
+    def feed(self):
+        return WebSocketDataFeed("InternalFeed")
+
+    def test_get_connection_for_symbol_none(self, feed):
+        assert feed._get_connection_for_symbol(Symbol("AAPL")) is None
+
+    async def test_stream_loop_runs_and_cancels(self, feed):
+        await feed.start_streaming()
+        assert feed._running is True
+        await asyncio.sleep(0.05)
+        await feed.stop_streaming()
+        assert feed._running is False
 
 
 if __name__ == "__main__":

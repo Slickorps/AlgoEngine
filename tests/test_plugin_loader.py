@@ -11,9 +11,11 @@ Covers:
 
 import json
 import sys
+import types
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,6 +28,7 @@ from src.plugins.interface import (
     PluginMetadata,
     PluginState,
     PluginType,
+    PluginDependency,
 )
 from src.plugins.loader import (
     PluginLoader,
@@ -676,3 +679,422 @@ class TestManifestParsing:
         meta = PluginLoader._parse_json_manifest(path)
         assert meta is not None
         assert meta.plugin_type == PluginType.GENERAL
+
+
+# ── Additional coverage ───────────────────────────────────────────
+
+
+class _RaisingInitPlugin(_TestPlugin):
+    def __init__(self):
+        raise RuntimeError("factory instantiation failed")
+
+
+class _OnLoadFailPlugin(_TestPlugin):
+    def on_load(self):
+        raise RuntimeError("on_load failure")
+
+
+class _ValidateRaisePlugin(_TestPlugin):
+    def validate(self):
+        raise ValueError("validate crashed")
+
+
+class _StopFailPlugin(_TestPlugin):
+    def on_stop(self):
+        raise RuntimeError("stop failure")
+
+
+class TestRegistryAdditional:
+    def test_register_factory_and_instances(self):
+        registry = PluginRegistry.instance()
+        plugin = _TestPlugin()
+        registry.register_factory("p1", lambda: plugin)
+        registry.register_instance("p1", plugin)
+        assert registry.is_loaded("p1")
+        assert registry.get_instance("p1") is plugin
+        assert registry.list_loaded() == ["p1"]
+
+    def test_register_discovered_duplicate_ignored(self):
+        registry = PluginRegistry.instance()
+        meta = PluginMetadata(name="dup", version="1.0")
+        registry.register_discovered(meta)
+        registry.register_discovered(PluginMetadata(name="dup", version="2.0"))
+        assert registry.get_metadata("dup").version == "1.0"
+
+    def test_stop_all_error_is_swallowed(self):
+        registry = PluginRegistry.instance()
+        registry.register_instance("bad", _StopFailPlugin())
+        count = registry.stop_all()
+        assert count == 0
+        assert not registry.get_errors()
+
+
+class TestLoaderDependencies:
+    def test_check_dependencies_unknown_plugin(self):
+        loader = PluginLoader()
+        assert loader.check_dependencies("ghost") == ["Unknown plugin: ghost"]
+
+    def test_check_dependencies_version_mismatch(self):
+        registry = PluginRegistry.instance()
+        registry.register_discovered(
+            PluginMetadata(name="dep", version="0.5.0")
+        )
+        registry.register_discovered(
+            PluginMetadata(
+                name="app",
+                version="1.0.0",
+                dependencies=[
+                    PluginDependency(name="dep", version_min="2.0.0")
+                ],
+            )
+        )
+        loader = PluginLoader()
+        unresolved = loader.check_dependencies("app")
+        assert len(unresolved) == 1
+        assert "version mismatch" in unresolved[0]
+
+    def test_load_plugin_unknown(self):
+        loader = PluginLoader()
+        assert loader.load_plugin("ghost") is None
+
+
+class TestLoaderDiscoveryAdditional:
+    def test_auto_discover_on_init(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "auto"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "plugin.json").write_text(json.dumps(
+            {"name": "auto", "version": "1.0.0"}
+        ))
+        loader = PluginLoader(
+            plugins_dir=str(tmp_plugins_dir), auto_discover=True
+        )
+        assert loader.registry.get_metadata("auto") is not None
+
+    def test_discover_dir_with_init_only(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "py-only"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        result = loader.discover()
+        assert len(result) == 1
+        assert result[0].name == "py-only"
+        assert result[0].version == "0.1.0"
+
+    def test_discover_nonexistent_directory(self):
+        loader = PluginLoader()
+        assert loader._discover_from_directory(Path("/nonexistent/dir")) == []
+
+    def test_discover_from_entry_points(self):
+        ep = MagicMock()
+        ep.name = "entry-plugin"
+        ep.load.return_value = _TestPlugin
+        loader = PluginLoader()
+        with patch("importlib.metadata.entry_points") as mock_eps:
+            mock_eps.return_value = [ep]
+            found = loader._discover_from_entry_points()
+        assert len(found) == 1
+        assert found[0].entry_point == "entry-plugin"
+
+    def test_discover_from_entry_points_instantiation_failure(self):
+        ep = MagicMock()
+        ep.name = "entry-plugin"
+        ep.load.return_value = _RaisingInitPlugin
+        loader = PluginLoader()
+        with patch("importlib.metadata.entry_points") as mock_eps:
+            mock_eps.return_value = [ep]
+            found = loader._discover_from_entry_points()
+        assert found == []
+
+
+class TestLoaderLoadingAdditional:
+    def test_load_via_registry_factory(self, tmp_plugins_dir):
+        plugin = _TestPlugin()
+        registry = PluginRegistry.instance()
+        registry.register_factory("test-plugin", lambda: plugin)
+        registry.register_discovered(
+            PluginMetadata(name="test-plugin", version="1.0.0")
+        )
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        loaded = loader.load_plugin("test-plugin")
+        assert loaded is plugin
+        assert loaded.state == PluginState.INITIALIZED
+
+    def test_load_factory_under_sandbox(self, tmp_plugins_dir):
+        registry = PluginRegistry.instance()
+        registry.register_factory("test-plugin", _TestPlugin)
+        registry.register_discovered(
+            PluginMetadata(name="test-plugin", version="1.0.0")
+        )
+        loader = PluginLoader(
+            plugins_dir=str(tmp_plugins_dir), sandbox_enabled=True
+        )
+        assert loader.load_plugin("test-plugin") is not None
+
+    def test_load_py_file_plugin(self, tmp_plugins_dir):
+        (tmp_plugins_dir / "pyplugin.py").write_text("""
+from src.plugins.interface import IPlugin, PluginMetadata, PluginType, PluginState
+class PyPlugin(IPlugin):
+    def __init__(self):
+        object.__setattr__(self, "_state", PluginState.DISCOVERED)
+    def metadata(self):
+        return PluginMetadata(name="pyplugin", version="1.0")
+    def on_load(self): pass
+    def on_init(self, c): pass
+    def on_start(self): pass
+    def on_stop(self): pass
+    @property
+    def state(self): return self.__dict__.get("_state", PluginState.DISCOVERED)
+    @state.setter
+    def state(self, v): object.__setattr__(self, "_state", v)
+""")
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        loader.discover()
+        plugin = loader.load_plugin("pyplugin")
+        assert plugin is not None
+
+    def test_load_module_with_two_classes_picks_matching_metadata(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "two-class"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("""
+from src.plugins.interface import IPlugin, PluginMetadata, PluginType, PluginState
+class Alpha(IPlugin):
+    def metadata(self):
+        return PluginMetadata(name="wrong-name", version="1.0")
+    @property
+    def state(self): return PluginState.DISCOVERED
+    @state.setter
+    def state(self, v): pass
+class Beta(IPlugin):
+    def metadata(self):
+        return PluginMetadata(name="two-class", version="1.0")
+    @property
+    def state(self): return PluginState.DISCOVERED
+    @state.setter
+    def state(self, v): pass
+""")
+        (pkg / "plugin.json").write_text(json.dumps(
+            {"name": "two-class", "version": "1.0.0"}
+        ))
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        loader.discover()
+        plugin = loader.load_plugin("two-class")
+        assert plugin is not None
+
+    def test_load_module_raising_import_error(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "crash-import"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("raise RuntimeError('import boom')")
+        (pkg / "plugin.json").write_text(json.dumps(
+            {"name": "crash-import", "version": "1.0.0"}
+        ))
+        loader = PluginLoader(
+            plugins_dir=str(tmp_plugins_dir), sandbox_enabled=True
+        )
+        loader.discover()
+        with pytest.raises(PluginLoadError, match="Failed to load"):
+            loader.load_plugin("crash-import")
+
+    def test_on_load_failure(self, tmp_plugins_dir):
+        registry = PluginRegistry.instance()
+        registry.register_factory("fail", _OnLoadFailPlugin)
+        registry.register_discovered(
+            PluginMetadata(name="fail", version="1.0.0")
+        )
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        with pytest.raises(PluginLoadError, match="on_load"):
+            loader.load_plugin("fail")
+
+    def test_validate_raising_exception(self, tmp_plugins_dir):
+        registry = PluginRegistry.instance()
+        registry.register_factory("val", _ValidateRaisePlugin)
+        registry.register_discovered(
+            PluginMetadata(name="val", version="1.0.0")
+        )
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        with pytest.raises(PluginValidationError):
+            loader.load_plugin("val")
+
+
+class TestLifecycleErrorBranches:
+    def _loader_with_loaded(self, plugin, name="p"):
+        registry = PluginRegistry.instance()
+        registry.register_instance(name, plugin)
+        return PluginLoader()
+
+    def test_start_plugin_not_loaded(self):
+        loader = PluginLoader()
+        assert loader.start_plugin("ghost") is False
+        assert loader.pause_plugin("ghost") is False
+        assert loader.resume_plugin("ghost") is False
+        assert loader.stop_plugin("ghost") is False
+        assert loader.unload_plugin("ghost") is False
+
+    def test_pause_plugin_failure(self):
+        class BadPause(_TestPlugin):
+            def on_pause(self):
+                raise RuntimeError("pause boom")
+
+        plugin = BadPause()
+        loader = self._loader_with_loaded(plugin)
+        assert loader.pause_plugin("p") is False
+
+    def test_resume_plugin_failure(self):
+        class BadResume(_TestPlugin):
+            def on_resume(self):
+                raise RuntimeError("resume boom")
+
+        plugin = BadResume()
+        loader = self._loader_with_loaded(plugin)
+        assert loader.resume_plugin("p") is False
+
+    def test_stop_plugin_failure_sets_error(self):
+        plugin = _StopFailPlugin()
+        loader = self._loader_with_loaded(plugin)
+        assert loader.stop_plugin("p") is False
+        assert plugin.state == PluginState.ERROR
+
+    def test_unload_running_plugin_stops_first(self):
+        plugin = _TestPlugin()
+        plugin.state = PluginState.RUNNING
+        loader = self._loader_with_loaded(plugin)
+        assert loader.unload_plugin("p") is True
+        assert plugin.state == PluginState.UNLOADED
+
+    def test_unload_failure(self):
+        class BadUnload(_TestPlugin):
+            def on_unload(self):
+                raise RuntimeError("unload boom")
+
+        plugin = BadUnload()
+        loader = self._loader_with_loaded(plugin)
+        assert loader.unload_plugin("p") is False
+
+    def test_start_plugin_failure_sets_error(self):
+        class BadStart(_TestPlugin):
+            def on_start(self):
+                raise RuntimeError("start boom")
+
+        plugin = BadStart()
+        loader = self._loader_with_loaded(plugin)
+        assert loader.start_plugin("p") is False
+        assert plugin.state == PluginState.ERROR
+
+    def test_load_all_unexpected_error(self, tmp_plugins_dir):
+        registry = PluginRegistry.instance()
+        registry.register_discovered(
+            PluginMetadata(name="boom", version="1.0.0")
+        )
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        with patch.object(loader, "load_plugin", side_effect=RuntimeError("unexpected")):
+            results = loader.load_all()
+        assert results["boom"] is None
+
+    def test_loader_summary(self):
+        loader = PluginLoader()
+        assert isinstance(loader.summary(), dict)
+        assert loader.registry is not None
+
+
+class TestPathLoadingErrors:
+    def test_load_module_without_plugin_class(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "no-class"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("VALUE = 42")
+        (pkg / "plugin.json").write_text(json.dumps(
+            {"name": "no-class", "version": "1.0.0"}
+        ))
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        loader.discover()
+        with pytest.raises(PluginLoadError, match="No IPlugin implementation"):
+            loader.load_plugin("no-class")
+
+    def test_load_module_with_raising_constructor(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "ctor-fail"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("""
+from src.plugins.interface import IPlugin, PluginMetadata, PluginType, PluginState
+class CtorFail(IPlugin):
+    def __init__(self):
+        raise RuntimeError("ctor boom")
+    def metadata(self):
+        return PluginMetadata(name="ctor-fail", version="1.0")
+""")
+        (pkg / "plugin.json").write_text(json.dumps(
+            {"name": "ctor-fail", "version": "1.0.0"}
+        ))
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        loader.discover()
+        with pytest.raises(PluginLoadError, match="Failed to instantiate"):
+            loader.load_plugin("ctor-fail")
+
+    def test_two_classes_no_metadata_match_returns_first(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "mismatch"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("""
+from src.plugins.interface import IPlugin, PluginMetadata, PluginType, PluginState
+class First(IPlugin):
+    def metadata(self):
+        return PluginMetadata(name="unrelated-1", version="1.0")
+    @property
+    def state(self): return PluginState.DISCOVERED
+    @state.setter
+    def state(self, v): pass
+class Second(IPlugin):
+    def metadata(self):
+        return PluginMetadata(name="unrelated-2", version="1.0")
+    @property
+    def state(self): return PluginState.DISCOVERED
+    @state.setter
+    def state(self, v): pass
+""")
+        (pkg / "plugin.json").write_text(json.dumps(
+            {"name": "mismatch", "version": "1.0.0"}
+        ))
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        loader.discover()
+        plugin = loader.load_plugin("mismatch")
+        assert plugin is not None
+
+
+class TestTomlManifest:
+    def test_parse_toml_manifest(self, tmp_plugins_dir):
+        path = tmp_plugins_dir / "p.toml"
+        path.write_text('[plugin]\nname = "tp"\nversion = "1.0"\n')
+        fake_tomllib = types.ModuleType("tomllib")
+        fake_tomllib.loads = lambda s: {
+            "plugin": {"name": "tp", "version": "1.0"}
+        }
+        with patch.dict(sys.modules, {"tomllib": fake_tomllib}):
+            meta = PluginLoader._parse_toml_manifest(path)
+        assert meta is not None
+        assert meta.name == "tp"
+        assert meta.version == "1.0"
+
+    def test_parse_toml_manifest_invalid(self, tmp_plugins_dir):
+        path = tmp_plugins_dir / "bad.toml"
+        path.write_text("not valid toml")
+        fake_tomllib = types.ModuleType("tomllib")
+
+        def raise_on_load(text):
+            raise ValueError("bad toml")
+
+        fake_tomllib.loads = raise_on_load
+        with patch.dict(sys.modules, {"tomllib": fake_tomllib}):
+            assert PluginLoader._parse_toml_manifest(path) is None
+
+    def test_discover_toml_plugin(self, tmp_plugins_dir):
+        pkg = tmp_plugins_dir / "toml-plugin"
+        pkg.mkdir()
+        (pkg / "plugin.toml").write_text(
+            '[plugin]\nname = "toml-plugin"\nversion = "1.0.0"\n'
+        )
+        fake_tomllib = types.ModuleType("tomllib")
+        fake_tomllib.loads = lambda s: {
+            "plugin": {"name": "toml-plugin", "version": "1.0.0"}
+        }
+        loader = PluginLoader(plugins_dir=str(tmp_plugins_dir))
+        with patch.dict(sys.modules, {"tomllib": fake_tomllib}):
+            result = loader.discover()
+        assert len(result) == 1
+        assert result[0].name == "toml-plugin"
