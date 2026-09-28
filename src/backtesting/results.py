@@ -161,7 +161,7 @@ class BacktestResults:
         """Get trades grouped by symbol"""
         grouped = defaultdict(list)
         for trade in self.trades:
-            grouped[trade.symbol].append(trade)
+            grouped[trade.symbol.ticker].append(trade)
         return dict(grouped)
     
     def get_monthly_returns(self) -> Dict[str, float]:

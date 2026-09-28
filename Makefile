@@ -3,8 +3,9 @@
 # =============================================================================
 
 # ── Configuration ──────────────────────────────────────────────────────
-PYTHON      := python3
-PIP         := pip3
+# Overridable via environment or `make PYTHON=python PIP=pip ...`
+PYTHON      ?= python3
+PIP         ?= pip3
 NPM         := npm
 TSC         := npx tsc
 CARGO       := cargo

@@ -66,6 +66,9 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 
+# Sphinx build output
+docs/_build/
+
 # OS
 .DS_Store
 Thumbs.db
