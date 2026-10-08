@@ -501,7 +501,7 @@ class TestIGBroker:
             success = await broker.submit_order(order)
 
             assert success
-            assert order.id == "DIAAAA12345"
+            assert order.broker_order_id == "DIAAAA12345"
 
     @pytest.mark.asyncio
     async def test_submit_market_order_not_connected(self, broker):
@@ -546,7 +546,7 @@ class TestIGBroker:
             success = await broker.submit_order(order)
 
             assert success
-            assert order.id == "WOAAAA12345"
+            assert order.broker_order_id == "WOAAAA12345"
 
     @pytest.mark.asyncio
     async def test_submit_limit_order_no_price(self, broker):
@@ -594,7 +594,7 @@ class TestIGBroker:
             success = await broker.submit_order(order)
 
             assert success
-            assert order.id == "WOAAAA67890"
+            assert order.broker_order_id == "WOAAAA67890"
 
     @pytest.mark.asyncio
     async def test_submit_stop_order_no_price(self, broker):
@@ -680,7 +680,7 @@ class TestIGBroker:
             side=OrderSide.BUY,
             limit_price=Decimal("1.1100"),
         )
-        order.id = "WOAAAA12345"
+        order.broker_order_id = "WOAAAA12345"
 
         with patch.object(broker._client, 'delete_working_order', return_value=mock_confirmation), \
              patch.object(broker, '_refresh_positions'), \
@@ -716,7 +716,7 @@ class TestIGBroker:
             quantity=Decimal("1000"),
             side=OrderSide.BUY,
         )
-        order.id = "DIAAAA12345"
+        order.broker_order_id = "DIAAAA12345"
 
         with patch.object(broker._client, 'close_position', return_value=mock_confirmation), \
              patch.object(broker, '_refresh_positions'), \
@@ -1023,7 +1023,7 @@ class TestIntegration:
 
             success = await broker.submit_order(order)
             assert success
-            assert order.id == "DIAAAA_INT_12345"
+            assert order.broker_order_id == "DIAAAA_INT_12345"
 
             # Get account info
             info = await broker.get_account_info()

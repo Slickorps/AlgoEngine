@@ -11,7 +11,12 @@ from enum import Enum
 from typing import Dict, List, Optional, Any, Callable
 from urllib.parse import urljoin
 
-from ..engine.interfaces import ITransactionHandler, IResultHandler
+from ..engine.interfaces import (
+    ITransactionHandler,
+    IResultHandler,
+    OrderEvent,
+    OrderStatus as InterfaceOrderStatus,
+)
 from ..trading.models import Symbol, Order, OrderType, OrderSide, OrderStatus, Position
 from ..utils.logger import get_logger
 from ..utils.error_handler import retry_async, RetryConfig
@@ -633,7 +638,7 @@ class IGApiClient:
                 logger.warning(f"IG rate limited, retry after {retry_after}s")
                 raise IGRateLimitError(f"Rate limited: retry after {retry_after}s")
 
-            if response.status not in (200, 201):
+            if response.status not in (200, 201, 204):
                 error_text = await response.text()
                 error_msg = f"IG API error {response.status}: {error_text}"
                 logger.error(error_msg)
@@ -1207,19 +1212,19 @@ class IGBroker(ITransactionHandler):
             OrderEvent with the result
         """
         success = await self.submit_order(order)
-        if success and order.id:
+        if success and order.broker_order_id:
             return OrderEvent(
-                order_id=order.id,
+                order_id=order.order_id,
                 symbol=order.symbol,
-                status=OrderStatus.FILLED if order.order_type == OrderType.MARKET else OrderStatus.SUBMITTED,
+                status=InterfaceOrderStatus.FILLED if order.order_type == OrderType.MARKET else InterfaceOrderStatus.SUBMITTED,
                 timestamp=datetime.now(),
                 filled_quantity=order.quantity if order.order_type == OrderType.MARKET else Decimal('0'),
                 message="Order submitted successfully",
             )
         return OrderEvent(
-            order_id=order.id or "",
+            order_id=order.order_id,
             symbol=order.symbol,
-            status=OrderStatus.FAILED,
+            status=InterfaceOrderStatus.REJECTED,
             timestamp=datetime.now(),
             message="Failed to process order",
         )
@@ -1233,9 +1238,9 @@ class IGBroker(ITransactionHandler):
         Returns:
             OrderEvent with the result
         """
-        if order.id:
+        if order.broker_order_id:
             # Cancel existing order first
-            await self.cancel_order(order.id)
+            await self.cancel_order(order)
             # Then resubmit
             submit_event = await self.process_order(order)
             return submit_event
@@ -1271,7 +1276,7 @@ class IGBroker(ITransactionHandler):
         if order_id in self._orders:
             ig_wo = self._orders[order_id]
             order = self._convert_ig_order_to_model(ig_wo)
-            order.id = ig_wo.deal_id
+            order.broker_order_id = ig_wo.deal_id
             return order
 
         return None
@@ -1401,7 +1406,7 @@ class IGBroker(ITransactionHandler):
             # Handle confirmation
             if confirmation.deal_status == IGDealStatus.ACCEPTED:
                 if confirmation.deal_id:
-                    order.id = confirmation.deal_id
+                    order.broker_order_id = confirmation.deal_id
                 logger.info(
                     f"Order accepted: ref={confirmation.deal_reference}, "
                     f"deal_id={confirmation.deal_id}"
@@ -1437,7 +1442,7 @@ class IGBroker(ITransactionHandler):
         if not self._connected:
             return False
 
-        deal_id = order.id
+        deal_id = order.broker_order_id
         if not deal_id:
             logger.error("Order has no ID")
             return False
@@ -1550,7 +1555,7 @@ class IGBroker(ITransactionHandler):
                     stop_price=ig_order.level if ig_order.order_type == IGOrderType.STOP else None,
                     status=OrderStatus.PENDING,
                 )
-                order.id = ig_order.deal_id
+                order.broker_order_id = ig_order.deal_id
                 orders.append(order)
 
             return orders
@@ -1776,7 +1781,7 @@ class IGBroker(ITransactionHandler):
             stop_price=ig_order.level if ig_order.order_type == IGOrderType.STOP else None,
             status=OrderStatus.PENDING,
         )
-        order.id = ig_order.deal_id
+        order.broker_order_id = ig_order.deal_id
         return order
 
     # -- Callbacks -----------------------------------------------------------
