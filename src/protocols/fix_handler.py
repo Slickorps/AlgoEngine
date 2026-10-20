@@ -387,21 +387,24 @@ class FIXMessage:
     # ── Serialization ─────────────────────────────────────────────
 
     def encode(self) -> bytes:
-        parts: List[str] = []
-        for tag, value in self._fields.items():
-            parts.append(f"{tag}={value}")
-        body = SOH.join(parts)
-        checksum = self._calculate_checksum(body)
-        full = f"{body}{SOH}10={checksum:03d}{SOH}"
-        return full.encode("ascii")
+        return self.encode_str().encode("ascii")
 
     def encode_str(self) -> str:
-        parts: List[str] = []
-        for tag, value in self._fields.items():
-            parts.append(f"{tag}={value}")
-        body = SOH.join(parts)
-        checksum = self._calculate_checksum(body)
-        return f"{body}{SOH}10={checksum:03d}{SOH}"
+        begin_string = self._fields.get(8, "FIX.4.4")
+        body_parts = [
+            f"{tag}={value}"
+            for tag, value in self._fields.items()
+            if tag not in (8, 9, 10)
+        ]
+        body = SOH.join(body_parts)
+        # BodyLength covers bytes after the 9 field's SOH up to and
+        # including the SOH that precedes the checksum field.
+        body_length = len(body.encode("ascii")) + 1
+        prefix = SOH.join(
+            [f"8={begin_string}", f"9={body_length}"] + body_parts
+        ) + SOH
+        checksum = self._calculate_checksum(prefix)
+        return f"{prefix}10={checksum:03d}{SOH}"
 
     @staticmethod
     def _calculate_checksum(body: str) -> int:
@@ -827,44 +830,38 @@ class FIXSession:
 
     def _process_buffer(self, buffer: bytes) -> bytes:
         while SOH_BYTE in buffer:
-            idx = buffer.find(SOH_BYTE)
-            body_len = self._extract_body_length(buffer, idx)
+            first_soh = buffer.find(SOH_BYTE)
+            second_soh = buffer.find(SOH_BYTE, first_soh + 1)
+            if second_soh == -1:
+                # Not enough data yet to read the BodyLength field
+                return buffer
+
+            body_len = self._extract_body_length(buffer, second_soh)
             if body_len is None:
                 return buffer
 
-            msg_end = buffer.find(SOH_BYTE, idx + 1)
-            while msg_end != -1 and (msg_end - idx) < body_len + 20:
-                next_soh = buffer.find(SOH_BYTE, msg_end + 1)
-                if next_soh == -1:
-                    break
-                msg_end = next_soh
+            checksum_idx = buffer.find(b"10=", second_soh + 1)
+            if checksum_idx == -1:
+                return buffer
 
-            msg_raw = buffer[:idx + 1]
-            b_idx = buffer.find(b"10=", idx + 1)
-            checksum_end = -1
-            if b_idx != -1:
-                cs_end = buffer.find(SOH_BYTE, b_idx + 3)
-                if cs_end != -1:
-                    checksum_end = cs_end + 1
+            checksum_end = buffer.find(SOH_BYTE, checksum_idx + 3)
+            if checksum_end == -1:
+                return buffer
 
-            if checksum_end != -1:
-                msg_raw = buffer[:checksum_end]
-                buffer = buffer[checksum_end:]
-            else:
-                msg_raw = buffer[: buffer.find(SOH_BYTE) + 1]
-                buffer = buffer[buffer.find(SOH_BYTE) + 1:]
+            msg_raw = buffer[:checksum_end + 1]
+            buffer = buffer[checksum_end + 1:]
 
-            if msg_raw:
-                try:
-                    msg = FIXMessage.parse_bytes(msg_raw)
-                    asyncio.create_task(self._dispatch(msg))
-                    self._stats.messages_received += 1
-                    self._stats.last_received_time = _time.monotonic()
-                except Exception:
-                    logger.error("[FIX] Failed to parse message", exc_info=True)
-                    self._stats.errors += 1
-            else:
+            if not msg_raw:
                 break
+
+            try:
+                msg = FIXMessage.parse_bytes(msg_raw)
+                asyncio.create_task(self._dispatch(msg))
+                self._stats.messages_received += 1
+                self._stats.last_received_time = _time.monotonic()
+            except Exception:
+                logger.error("[FIX] Failed to parse message", exc_info=True)
+                self._stats.errors += 1
 
         return buffer
 
