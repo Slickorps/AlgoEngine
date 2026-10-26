@@ -1,8 +1,11 @@
 """Tests for the live trading engine."""
 
+import asyncio
+
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.trading.live_engine import (
     LiveEngine,
@@ -577,3 +580,407 @@ class TestCreateLiveEngine:
     def test_factory_passes_config_kwargs(self):
         engine = create_live_engine(FakePortfolio(), max_daily_trades=5)
         assert engine._config.max_daily_trades == 5
+
+
+class TestLiveEngineErrorPaths:
+    def _engine(self, broker=None, **cfg):
+        cfg.setdefault("reconnect_max_attempts", 1)
+        cfg.setdefault("reconnect_delay", 0.0)
+        engine = LiveEngine(
+            portfolio=FakePortfolio(), broker=broker,
+            config=LiveEngineConfig(**cfg),
+        )
+        engine._running = True
+        engine._health = EngineHealth.HEALTHY
+        return engine
+
+    def test_circuit_breaker_handler_error(self):
+        engine = self._engine()
+
+        def bad(name):
+            raise ValueError("boom")
+
+        engine.on_circuit_breaker(bad)
+        engine._on_cb_open("test")
+        assert engine.stats.is_circuit_breaker_active is True
+
+    async def test_start_exception(self):
+        engine = LiveEngine(portfolio=FakePortfolio())
+        engine._connect_broker = AsyncMock(side_effect=Exception("boom"))
+
+        assert await engine.start() is False
+        assert engine.health == EngineHealth.OFFLINE
+
+    async def test_stop_cancels_pending_orders(self):
+        broker = FakeBroker()
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+        await engine.start()
+
+        order = make_order(Symbol(ticker="AAPL"))
+        engine.order_manager.register_order(order)
+        engine._pending_orders[order.order_id] = order
+
+        await engine.stop()
+        assert order.order_id not in engine._pending_orders
+
+    async def test_connect_broker_generic_exception(self):
+        broker = FakeBroker()
+        broker.connect = AsyncMock(side_effect=Exception("boom"))
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+
+        assert await engine._connect_broker() is False
+        assert engine.health == EngineHealth.CRITICAL
+
+    async def test_disconnect_broker_exception(self):
+        broker = FakeBroker()
+        broker.disconnect = AsyncMock(side_effect=Exception("boom"))
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+        engine._connected = True
+
+        await engine._disconnect_broker()
+        assert engine.is_connected is False
+
+    async def test_reconnect_disabled(self):
+        engine = LiveEngine(
+            portfolio=FakePortfolio(), broker=FakeBroker(),
+            config=LiveEngineConfig(auto_reconnect=False),
+        )
+        assert await engine._reconnect_broker() is False
+
+    async def test_reconnect_without_broker(self):
+        assert await LiveEngine(portfolio=FakePortfolio())._reconnect_broker() is False
+
+    async def test_reconnect_success(self):
+        engine = self._engine(broker=FakeBroker())
+        engine._connect_broker = AsyncMock(return_value=True)
+
+        assert await engine._reconnect_broker() is True
+        assert engine.stats.connection_drops == 1
+
+    async def test_reconnect_failure(self):
+        engine = self._engine(broker=FakeBroker())
+        engine._connect_broker = AsyncMock(return_value=False)
+
+        assert await engine._reconnect_broker() is False
+        assert engine.health == EngineHealth.OFFLINE
+
+    async def test_submit_order_unhealthy(self):
+        engine = self._engine()
+        engine._health = EngineHealth.CRITICAL
+
+        ok, msg = await engine.submit_order(make_order(Symbol(ticker="AAPL")))
+        assert ok is False
+        assert "health" in msg
+
+    async def test_submit_order_handler_error(self):
+        engine = self._engine()
+        engine._connected = True
+
+        def bad(order):
+            raise ValueError("boom")
+
+        engine.on_order(bad)
+        ok, _ = await engine.submit_order(make_order(Symbol(ticker="AAPL")))
+        assert ok is True
+
+    async def test_submit_order_broker_rejects(self):
+        engine = self._engine()
+        engine._connected = True
+        engine._execution_engine.submit_order = AsyncMock(return_value=False)
+
+        ok, msg = await engine.submit_order(make_order(Symbol(ticker="AAPL")))
+        assert ok is False
+        assert "rejected" in msg.lower()
+        assert engine.stats.total_orders_rejected == 1
+
+    async def test_submit_order_exception(self):
+        engine = self._engine()
+        engine._connected = True
+        engine._execution_engine.submit_order = AsyncMock(
+            side_effect=Exception("boom")
+        )
+
+        ok, msg = await engine.submit_order(make_order(Symbol(ticker="AAPL")))
+        assert ok is False
+        assert "Error submitting" in msg
+
+    async def test_cancel_order_exception(self):
+        engine = self._engine()
+        order = make_order(Symbol(ticker="AAPL"))
+        engine.order_manager.register_order(order)
+        engine._pending_orders[order.order_id] = order
+        engine._execution_engine.cancel_order = AsyncMock(
+            side_effect=Exception("boom")
+        )
+
+        assert await engine.cancel_order(order.order_id) is False
+
+    def test_process_market_data_exception(self):
+        engine = self._engine()
+        engine._execution_engine.process_tick = MagicMock(
+            side_effect=Exception("boom")
+        )
+        tick = Tick(
+            symbol=Symbol("AAPL"), timestamp=datetime.now(),
+            bid_price=Decimal("1"), ask_price=Decimal("2"),
+            bid_size=Decimal("1"), ask_size=Decimal("1"),
+        )
+
+        engine.process_market_data(tick)
+        assert engine.trade_logger.get_recent_errors()
+
+    def test_handle_fill_handler_error(self):
+        engine = self._engine()
+        order = make_order(Symbol(ticker="AAPL"))
+        engine._pending_orders[order.order_id] = order
+
+        def bad(fill):
+            raise ValueError("boom")
+
+        engine.on_fill(bad)
+        fill = Fill(
+            order_id=order.order_id, symbol=order.symbol, side=OrderSide.BUY,
+            quantity=Decimal("1"), fill_price=Decimal("100"), fill_time=datetime.now(),
+        )
+
+        engine.handle_fill(fill)
+        assert engine.stats.total_orders_filled == 1
+
+    def test_handle_fill_outer_exception(self):
+        engine = self._engine()
+        order = make_order(Symbol(ticker="AAPL"))
+        engine._pending_orders[order.order_id] = order
+        engine._trade_logger.log_order_fill = MagicMock(
+            side_effect=Exception("boom")
+        )
+        fill = Fill(
+            order_id=order.order_id, symbol=order.symbol, side=OrderSide.BUY,
+            quantity=Decimal("1"), fill_price=Decimal("100"), fill_time=datetime.now(),
+        )
+
+        engine.handle_fill(fill)
+        assert engine.trade_logger.get_recent_errors()
+
+    def test_check_order_risk_cash_buffer(self):
+        engine = LiveEngine(
+            portfolio=FakePortfolio("100"),
+            mode=LiveTradingMode.LIVE,
+            config=LiveEngineConfig(min_cash_buffer=Decimal("1000")),
+        )
+
+        ok, reason = engine._check_order_risk(
+            make_order(Symbol("AAPL"), quantity="1"), Decimal("1")
+        )
+        assert ok is False
+        assert "buffer" in reason
+
+    async def test_health_check_loop_runs(self):
+        engine = self._engine()
+        engine._perform_health_check = AsyncMock()
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._health_check_loop()
+
+        engine._perform_health_check.assert_awaited()
+
+    async def test_health_check_loop_error(self):
+        engine = self._engine()
+        engine._perform_health_check = AsyncMock(side_effect=Exception("boom"))
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._health_check_loop()
+
+    async def test_health_check_loop_cancelled(self):
+        engine = self._engine()
+        engine._perform_health_check = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        async def fake_sleep(_):
+            pass
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._health_check_loop()
+
+    async def test_perform_health_check_reconnects(self):
+        broker = FakeBroker()
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+        engine._health = EngineHealth.OFFLINE
+        engine._reconnect_broker = AsyncMock(return_value=True)
+
+        await engine._perform_health_check()
+
+        assert engine.health == EngineHealth.DEGRADED
+        engine._reconnect_broker.assert_awaited()
+
+    async def test_perform_health_check_timeout(self):
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=FakeBroker())
+
+        with patch(
+            "src.trading.live_engine.asyncio.wait_for",
+            new=AsyncMock(side_effect=asyncio.TimeoutError()),
+        ):
+            await engine._perform_health_check()
+
+        assert engine.health == EngineHealth.DEGRADED
+
+    async def test_perform_health_check_exception(self):
+        broker = FakeBroker()
+        broker.is_connected = MagicMock(side_effect=RuntimeError("boom"))
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+
+        await engine._perform_health_check()
+
+        assert engine.health == EngineHealth.DEGRADED
+
+    async def test_health_change_handler_error(self):
+        engine = LiveEngine(portfolio=FakePortfolio())
+        engine._health = EngineHealth.OFFLINE
+
+        def bad(health):
+            raise ValueError("boom")
+
+        engine.on_health_change(bad)
+        await engine._perform_health_check()
+
+        assert engine.health == EngineHealth.HEALTHY
+
+    async def test_position_sync_loop_runs(self):
+        engine = self._engine()
+        engine._sync_positions = AsyncMock()
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._position_sync_loop()
+
+        engine._sync_positions.assert_awaited()
+
+    async def test_position_sync_loop_error(self):
+        engine = self._engine()
+        engine._sync_positions = AsyncMock(side_effect=Exception("boom"))
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._position_sync_loop()
+
+    async def test_position_sync_loop_cancelled(self):
+        engine = self._engine()
+        engine._sync_positions = AsyncMock(side_effect=asyncio.CancelledError())
+
+        async def fake_sleep(_):
+            pass
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._position_sync_loop()
+
+    async def test_sync_positions_exception(self):
+        broker = FakeBroker()
+        broker.get_positions = AsyncMock(side_effect=Exception("boom"))
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+        engine._connected = True
+
+        await engine._sync_positions()
+        assert engine.trade_logger.get_recent_errors()
+
+    async def test_order_sync_loop_runs(self):
+        engine = self._engine()
+        engine._sync_orders = AsyncMock()
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._order_sync_loop()
+
+        engine._sync_orders.assert_awaited()
+
+    async def test_order_sync_loop_error(self):
+        engine = self._engine()
+        engine._sync_orders = AsyncMock(side_effect=Exception("boom"))
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._order_sync_loop()
+
+    async def test_order_sync_loop_cancelled(self):
+        engine = self._engine()
+        engine._sync_orders = AsyncMock(side_effect=asyncio.CancelledError())
+
+        async def fake_sleep(_):
+            pass
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._order_sync_loop()
+
+    async def test_sync_orders_not_connected(self):
+        await LiveEngine(portfolio=FakePortfolio())._sync_orders()
+
+    async def test_sync_orders_exception(self):
+        broker = FakeBroker()
+        broker.get_orders = AsyncMock(side_effect=Exception("boom"))
+        engine = LiveEngine(portfolio=FakePortfolio(), broker=broker)
+        engine._connected = True
+        order = make_order(Symbol(ticker="AAPL"))
+        engine._pending_orders[order.order_id] = order
+
+        await engine._sync_orders()
+        assert engine.trade_logger.get_recent_errors()
+
+    async def test_daily_reset_loop_runs(self):
+        engine = self._engine()
+        engine._daily_trade_count = 5
+        engine._daily_volume = Decimal("100")
+
+        async def fake_sleep(_):
+            engine._running = False
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._daily_reset_loop()
+
+        assert engine._daily_trade_count == 0
+        assert engine._daily_volume == Decimal("0")
+
+    async def test_daily_reset_loop_error(self):
+        engine = self._engine()
+
+        async def fake_sleep(_):
+            engine._running = False
+            raise RuntimeError("boom")
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._daily_reset_loop()
+
+    async def test_daily_reset_loop_cancelled(self):
+        engine = self._engine()
+
+        async def fake_sleep(_):
+            raise asyncio.CancelledError()
+
+        with patch("src.trading.live_engine.asyncio.sleep", new=fake_sleep):
+            await engine._daily_reset_loop()
+
+    def test_positions_differ_avg_price(self):
+        engine = LiveEngine(portfolio=FakePortfolio())
+        symbol = Symbol("AAPL")
+        local = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("10"), avg_entry_price=Decimal("100"),
+        )
+        broker = Position(
+            symbol=symbol, side=OrderSide.BUY,
+            quantity=Decimal("10"), avg_entry_price=Decimal("101"),
+        )
+
+        assert engine._positions_differ(local, broker) is True
